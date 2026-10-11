@@ -1,0 +1,10 @@
+{
+  "IsEncrypted": false,
+  "Values": {
+    "AzureWebJobsStorage": "UseDevelopmentStorage=true",
+    "FUNCTIONS_WORKER_RUNTIME": "python",
+    "PURPLEAIR_API_KEY": "C01C5C52-B05C-11F1-9E30-4201AC1DC129",
+    "PURPLEAIR_SENSOR_INDEX": "12345",
+    "AZURE_STORAGE_CONNECTION_STRING": "UseDevelopmentStorage=true"
+  }
+}

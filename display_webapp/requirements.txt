@@ -1,0 +1,3 @@
+flask
+azure-data-tables
+python-dotenv
