@@ -32,15 +32,12 @@ jobs:
         with:
           python-version: ${{ env.PYTHON_VERSION }}
 
-      - name: Create and start virtual environment
+      # Install dependencies directly into the Azure Functions package directory (.python_packages)
+      - name: Install dependencies into function package
         run: |
-          python -m venv venv
-          source venv/bin/activate
+          pip install --target="${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/.python_packages/lib/site-packages" -r ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/requirements.txt
 
-      - name: Install dependencies
-        run: pip install -r ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}/requirements.txt
-
-      # Zip contents of ingestion_function (excluding local settings)
+      # Zip contents of ingestion_function (including the installed .python_packages)
       - name: Zip artifact for deployment
         run: |
           cd ${{ env.AZURE_FUNCTIONAPP_PACKAGE_PATH }}
