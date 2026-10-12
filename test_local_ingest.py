@@ -83,7 +83,10 @@ for sensor in active_sensors:
     url = f"https://api.purpleair.com/v1/sensors/{sensor_id}"
     print(f"   Fetching sensor #{sensor_id} ({registered_name})...")
     
-    response = requests.get(url, headers=headers, timeout=15)
+    response = requests.get(
+        url, headers=headers, timeout=15,
+        params={"fields": "name,latitude,longitude,pm2.5,temperature,humidity"},
+    )
     if response.status_code == 200:
         sensor_data = response.json().get("sensor", {})
         entity = {
@@ -95,6 +98,9 @@ for sensor in active_sensors:
             "humidity": float(sensor_data.get("humidity", 0.0)),
             "timestamp": utc_now.isoformat()
         }
+        if sensor_data.get("latitude") is not None and sensor_data.get("longitude") is not None:
+            entity["latitude"] = float(sensor_data["latitude"])
+            entity["longitude"] = float(sensor_data["longitude"])
         data_client.upsert_entity(entity=entity)
         print(f"   ✅ Saved #{sensor_id}: PM2.5={entity['pm2_5']}, Temp={entity['temperature']}°F")
     else:

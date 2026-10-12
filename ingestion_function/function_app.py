@@ -60,6 +60,8 @@ def purpleair_ingest(myTimer: func.TimerRequest) -> None:
 
     # 4. Fetch and save data for each active sensor
     headers = {"X-API-Key": api_key}
+    # Only request the fields we store - PurpleAir charges API points per field returned
+    params = {"fields": "name,latitude,longitude,pm2.5,temperature,humidity"}
     utc_now = datetime.now(timezone.utc)
     row_key = utc_now.strftime("%Y%m%d%H%M%S")
 
@@ -72,7 +74,7 @@ def purpleair_ingest(myTimer: func.TimerRequest) -> None:
 
         url = f"https://api.purpleair.com/v1/sensors/{sensor_index}"
         try:
-            response = requests.get(url, headers=headers, timeout=15)
+            response = requests.get(url, headers=headers, params=params, timeout=15)
             if response.status_code == 200:
                 data = response.json()
                 sensor_data = data.get("sensor", {})
@@ -86,6 +88,10 @@ def purpleair_ingest(myTimer: func.TimerRequest) -> None:
                     "humidity": float(sensor_data.get("humidity", 0.0)),
                     "timestamp": utc_now.isoformat()
                 }
+                # Store coordinates when available (used as a map fallback by the dashboard)
+                if sensor_data.get("latitude") is not None and sensor_data.get("longitude") is not None:
+                    entity["latitude"] = float(sensor_data["latitude"])
+                    entity["longitude"] = float(sensor_data["longitude"])
                 
                 data_client.upsert_entity(entity=entity)
                 logging.info(f"Successfully ingested sensor {sensor_index} ({entity['name']})")

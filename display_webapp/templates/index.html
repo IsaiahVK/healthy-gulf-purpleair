@@ -3,41 +3,144 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Healthy Gulf - PurpleAir PoC</title>
+    <title>Healthy Gulf - Air Quality Dashboard</title>
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" rel="stylesheet">
+    <style>
+        body { background: #f4f6f9; }
+        .navbar-brand small { font-weight: 400; opacity: .75; }
+
+        #map {
+            height: 480px;
+            border-radius: .75rem;
+            box-shadow: 0 2px 10px rgba(0,0,0,.08);
+            z-index: 0;
+        }
+
+        /* AQI pins: colored circle showing the AQI number */
+        .aqi-pin {
+            width: 40px; height: 40px;
+            border-radius: 50%;
+            border: 3px solid #fff;
+            box-shadow: 0 2px 6px rgba(0,0,0,.45);
+            display: flex; align-items: center; justify-content: center;
+            font-weight: 700; font-size: 14px;
+            transition: transform .15s ease;
+        }
+        .aqi-pin:hover { transform: scale(1.15); }
+        .aqi-pin.inactive { opacity: .55; border-style: dashed; }
+
+        /* Popup card */
+        .leaflet-popup-content { margin: 0; min-width: 240px; }
+        .leaflet-popup-content-wrapper { padding: 0; overflow: hidden; border-radius: .6rem; }
+        .popup-header { padding: .75rem 1rem; }
+        .popup-header .aqi-value { font-size: 2rem; font-weight: 800; line-height: 1; }
+        .popup-body { padding: .75rem 1rem; }
+        .popup-body .metric { display: flex; justify-content: space-between; padding: .2rem 0; border-bottom: 1px solid #eee; }
+        .popup-body .metric:last-child { border-bottom: 0; }
+
+        /* Map legend */
+        .aqi-legend { background: #fff; padding: .5rem .75rem; border-radius: .5rem; box-shadow: 0 1px 5px rgba(0,0,0,.3); font-size: 12px; line-height: 1.6; }
+        .aqi-legend .swatch { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 6px; vertical-align: middle; border: 1px solid rgba(0,0,0,.2); }
+
+        .stat-card .stat-value { font-size: 1.75rem; font-weight: 700; }
+        .aqi-badge { display: inline-block; min-width: 2.5rem; padding: .2rem .5rem; border-radius: 1rem; font-weight: 700; text-align: center; }
+        .sensor-link { cursor: pointer; text-decoration: none; }
+        .sensor-link:hover { text-decoration: underline; }
+    </style>
 </head>
-<body class="bg-light">
-    <div class="container mt-5">
-        <div class="d-flex justify-content-between align-items-center mb-3">
-            <div>
-                <h1 class="mb-1">PurpleAir Sensor Data Dashboard</h1>
-                <p class="lead text-muted mb-0">Live data ingested every 5 minutes from Azure Functions.</p>
-            </div>
-            <span class="badge bg-success fs-6">Connected to Azure</span>
+<body>
+    <nav class="navbar navbar-dark bg-dark mb-4">
+        <div class="container">
+            <span class="navbar-brand mb-0 h1">Healthy Gulf <small>· PurpleAir Air Quality</small></span>
+            <span class="badge bg-success">Connected to Azure</span>
         </div>
-        
-        <div class="card shadow-sm border-0">
+    </nav>
+
+    <div class="container pb-5">
+
+        <!-- Map -->
+        <div class="mb-4">
+            <div id="map"></div>
+            {% if summary.mapped_count < summary.sensor_count %}
+            <div class="alert alert-warning mt-2 mb-0 py-2 small">
+                {{ summary.sensor_count - summary.mapped_count }} sensor(s) have no coordinates yet and are not shown on the map.
+                Run <code>python backfill_sensor_locations.py</code> to add them.
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Summary cards -->
+        <div class="row g-3 mb-4">
+            <div class="col-6 col-lg-3">
+                <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="text-muted small">Sensors</div>
+                    <div class="stat-value">{{ summary.sensor_count }}</div>
+                    <div class="small text-muted">{{ summary.active_count }} actively ingesting</div>
+                </div></div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="text-muted small">Average AQI (latest)</div>
+                    <div class="stat-value">
+                        {% if summary.avg_aqi.aqi is not none %}
+                        <span class="aqi-badge" style="background: {{ summary.avg_aqi.color }}; color: {{ summary.avg_aqi.text_color }};">{{ summary.avg_aqi.aqi }}</span>
+                        {% else %}—{% endif %}
+                    </div>
+                    <div class="small text-muted">{{ summary.avg_aqi.category }}</div>
+                </div></div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="text-muted small">Average PM2.5 (latest)</div>
+                    <div class="stat-value">{% if summary.avg_pm2_5 is not none %}{{ "%.1f"|format(summary.avg_pm2_5) }}{% else %}—{% endif %}</div>
+                    <div class="small text-muted">µg/m³</div>
+                </div></div>
+            </div>
+            <div class="col-6 col-lg-3">
+                <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="text-muted small">Last reading</div>
+                    <div class="stat-value fs-5 mt-2 js-relative" data-ts="{{ summary.last_updated or '' }}">—</div>
+                    <div class="small text-muted">{{ summary.reading_count }} readings stored</div>
+                </div></div>
+            </div>
+        </div>
+
+        <!-- Recent readings -->
+        <div class="card border-0 shadow-sm">
+            <div class="card-header bg-white border-0 pt-3">
+                <h5 class="mb-0">Recent Readings</h5>
+                <small class="text-muted">Latest 50 readings ingested by the Azure Function. Click a sensor name to find it on the map.</small>
+            </div>
             <div class="card-body p-0">
-                <table class="table table-striped table-hover mb-0 align-middle">
-                    <thead class="table-dark">
+                <div class="table-responsive">
+                <table class="table table-hover mb-0 align-middle">
+                    <thead class="table-light">
                         <tr>
-                            <th class="p-3">Timestamp (UTC)</th>
-                            <th class="p-3">Sensor Name</th>
-                            <th class="p-3">Sensor ID</th>
-                            <th class="p-3">PM 2.5</th>
-                            <th class="p-3">Temperature</th>
-                            <th class="p-3">Humidity</th>
+                            <th class="ps-3">Time</th>
+                            <th>Sensor</th>
+                            <th>AQI</th>
+                            <th>PM2.5</th>
+                            <th>Temperature</th>
+                            <th class="pe-3">Humidity</th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for row in data %}
+                        {% for row in recent %}
                         <tr>
-                            <td class="p-3">{{ row.timestamp }}</td>
-                            <td class="p-3 fw-bold">{{ row.get('name', 'Unknown') }}</td>
-                            <td class="p-3 text-muted">#{{ row.PartitionKey }}</td>
-                            <td class="p-3 text-primary fw-bold">{{ "%.1f"|format(row.get('pm2_5', 0)) }} µg/m³</td>
-                            <td class="p-3">{{ row.get('temperature', 'N/A') }} °F</td>
-                            <td class="p-3">{{ row.get('humidity', 'N/A') }}%</td>
+                            <td class="ps-3 text-nowrap js-time" data-ts="{{ row.timestamp or '' }}">{{ row.timestamp or '—' }}</td>
+                            <td>
+                                <a class="sensor-link fw-semibold" data-sensor-id="{{ row.sensor_id }}">{{ row.name }}</a>
+                                <div class="small text-muted">#{{ row.sensor_id }}</div>
+                            </td>
+                            <td>
+                                {% if row.aqi is not none %}
+                                <span class="aqi-badge" style="background: {{ row.color }}; color: {{ row.text_color }};">{{ row.aqi }}</span>
+                                {% else %}—{% endif %}
+                            </td>
+                            <td>{% if row.pm2_5 is not none %}{{ "%.1f"|format(row.pm2_5) }} µg/m³{% else %}—{% endif %}</td>
+                            <td>{% if row.temperature is not none %}{{ "%.0f"|format(row.temperature) }} °F{% else %}—{% endif %}</td>
+                            <td class="pe-3">{% if row.humidity is not none %}{{ "%.0f"|format(row.humidity) }}%{% else %}—{% endif %}</td>
                         </tr>
                         {% else %}
                         <tr>
@@ -48,8 +151,140 @@
                         {% endfor %}
                     </tbody>
                 </table>
+                </div>
             </div>
         </div>
+
+        <p class="text-muted small mt-3 mb-0">
+            AQI is calculated from raw PurpleAir PM2.5 using the US EPA breakpoints, with no EPA correction factor applied.
+            Treat it as an estimate rather than an official AQI.
+        </p>
     </div>
+
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const SENSORS = {{ sensors | tojson }};
+        const AQI_SCALE = {{ aqi_scale | tojson }};
+        const DEFAULT_CENTER = [29.95, -90.07]; // New Orleans
+
+        // ---------- helpers ----------
+        function escapeHtml(value) {
+            return String(value ?? "").replace(/[&<>"']/g, c => ({
+                "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+            }[c]));
+        }
+
+        function formatLocal(ts) {
+            if (!ts) return "—";
+            const d = new Date(ts);
+            return isNaN(d) ? ts : d.toLocaleString([], { dateStyle: "medium", timeStyle: "short" });
+        }
+
+        function timeAgo(ts) {
+            if (!ts) return "—";
+            const d = new Date(ts);
+            if (isNaN(d)) return ts;
+            const mins = Math.round((Date.now() - d.getTime()) / 60000);
+            if (mins < 1) return "just now";
+            if (mins < 60) return `${mins} min ago`;
+            const hrs = Math.round(mins / 60);
+            if (hrs < 48) return `${hrs} hr${hrs === 1 ? "" : "s"} ago`;
+            const days = Math.round(hrs / 24);
+            return `${days} days ago`;
+        }
+
+        const fmt = (v, digits, unit) => (v === null || v === undefined) ? "—" : `${Number(v).toFixed(digits)}${unit}`;
+
+        // ---------- map ----------
+        const map = L.map("map", { scrollWheelZoom: false }).setView(DEFAULT_CENTER, 11);
+        L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+            maxZoom: 19,
+            attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+        }).addTo(map);
+        map.on("click", () => map.scrollWheelZoom.enable()); // enable scroll zoom only after the user interacts
+
+        function popupHtml(s) {
+            const status = s.is_active
+                ? '<span class="badge bg-success">Active</span>'
+                : '<span class="badge bg-secondary">Paused</span>';
+            return `
+                <div class="popup-header" style="background:${s.color}; color:${s.text_color};">
+                    <div class="d-flex justify-content-between align-items-start">
+                        <div>
+                            <div class="fw-bold">${escapeHtml(s.name)}</div>
+                            <div class="small" style="opacity:.8;">#${escapeHtml(s.id)}${s.location ? " · " + escapeHtml(s.location) : ""}</div>
+                        </div>
+                        <div class="text-end ms-3">
+                            <div class="aqi-value">${s.aqi ?? "—"}</div>
+                            <div class="small">AQI</div>
+                        </div>
+                    </div>
+                    <div class="small fw-semibold mt-1">${escapeHtml(s.category)}</div>
+                </div>
+                <div class="popup-body">
+                    <div class="metric"><span class="text-muted">PM2.5</span><strong>${fmt(s.pm2_5, 1, " µg/m³")}</strong></div>
+                    <div class="metric"><span class="text-muted">Temperature</span><strong>${fmt(s.temperature, 0, " °F")}</strong></div>
+                    <div class="metric"><span class="text-muted">Humidity</span><strong>${fmt(s.humidity, 0, "%")}</strong></div>
+                    <div class="metric"><span class="text-muted">Last reading</span><strong title="${escapeHtml(formatLocal(s.timestamp))}">${timeAgo(s.timestamp)}</strong></div>
+                    <div class="mt-2 d-flex justify-content-between align-items-center">
+                        ${status}
+                        <a class="small" href="https://map.purpleair.com/?select=${encodeURIComponent(s.id)}" target="_blank" rel="noopener">View on PurpleAir ↗</a>
+                    </div>
+                </div>`;
+        }
+
+        const markers = {};
+        const bounds = [];
+        SENSORS.forEach(s => {
+            if (s.latitude === null || s.longitude === null) return;
+            const icon = L.divIcon({
+                className: "",
+                html: `<div class="aqi-pin ${s.is_active ? "" : "inactive"}" style="background:${s.color}; color:${s.text_color};">${s.aqi ?? "–"}</div>`,
+                iconSize: [40, 40],
+                iconAnchor: [20, 20],
+                popupAnchor: [0, -20]
+            });
+            const marker = L.marker([s.latitude, s.longitude], { icon, title: s.name })
+                .addTo(map)
+                .bindPopup(popupHtml(s));
+            markers[s.id] = marker;
+            bounds.push([s.latitude, s.longitude]);
+        });
+
+        if (bounds.length > 1) {
+            map.fitBounds(bounds, { padding: [50, 50], maxZoom: 14 });
+        } else if (bounds.length === 1) {
+            map.setView(bounds[0], 13);
+        }
+
+        // Legend
+        const legend = L.control({ position: "bottomright" });
+        legend.onAdd = () => {
+            const div = L.DomUtil.create("div", "aqi-legend");
+            div.innerHTML = "<strong>US AQI (PM2.5)</strong><br>" + AQI_SCALE.map(b =>
+                `<span class="swatch" style="background:${b[5]}"></span>${b[2]}–${b[3]} ${escapeHtml(b[4])}`
+            ).join("<br>");
+            return div;
+        };
+        legend.addTo(map);
+
+        // Clicking a sensor in the table opens its pin on the map
+        document.querySelectorAll(".sensor-link").forEach(link => {
+            link.addEventListener("click", () => {
+                const marker = markers[link.dataset.sensorId];
+                if (!marker) return;
+                document.getElementById("map").scrollIntoView({ behavior: "smooth", block: "center" });
+                map.flyTo(marker.getLatLng(), Math.max(map.getZoom(), 14));
+                marker.openPopup();
+            });
+        });
+
+        // Convert UTC timestamps to the viewer's local time
+        document.querySelectorAll(".js-time").forEach(el => { el.textContent = formatLocal(el.dataset.ts); });
+        document.querySelectorAll(".js-relative").forEach(el => {
+            el.textContent = timeAgo(el.dataset.ts);
+            el.title = formatLocal(el.dataset.ts);
+        });
+    </script>
 </body>
 </html>
