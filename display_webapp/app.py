@@ -1,8 +1,11 @@
-from flask import Flask, render_template, jsonify
+from datetime import datetime, timedelta, timezone
+from flask import Flask, render_template, jsonify, request
 import math
 import os
 from pathlib import Path
+import time
 from dotenv import load_dotenv
+import requests
 from azure.data.tables import TableServiceClient
 from azure.core.exceptions import ResourceNotFoundError
 
@@ -14,6 +17,12 @@ else:
     load_dotenv()
 
 app = Flask(__name__)
+
+SPIKE_THRESHOLD = 35.0
+HISTORY_DAYS = 7
+HISTORY_CACHE_SECONDS = 900
+PURPLEAIR_HISTORY_URL = "https://api.purpleair.com/v1/sensors/{sensor_id}/history"
+_event_cache = {"expires_at": 0, "data": None}
 
 # US EPA PM2.5 AQI breakpoints (2024 revision):
 # (pm_low, pm_high, aqi_low, aqi_high, category, pin color, text color)
@@ -53,6 +62,148 @@ def _first_float(*values):
         except (TypeError, ValueError):
             continue
     return None
+
+
+def detect_spike_events(sensor, readings, threshold=SPIKE_THRESHOLD):
+    """Group consecutive 10-minute readings above the spike threshold."""
+    sorted_readings = sorted(readings, key=lambda row: row["timestamp"])
+    events = []
+    current = []
+
+    def finish_event():
+        if not current:
+            return
+        values = [row["pm2_5"] for row in current]
+        start = current[0]["timestamp"]
+        end = current[-1]["timestamp"]
+        events.append({
+            "sensor_id": sensor["id"],
+            "sensor_name": sensor["name"],
+            "location": sensor.get("location", ""),
+            "start": start.isoformat(),
+            "end": end.isoformat(),
+            "duration_minutes": max(10, int((end - start).total_seconds() // 60) + 10),
+            "peak_pm2_5": max(values),
+            "mean_pm2_5": sum(values) / len(values),
+            "reading_count": len(values),
+        })
+
+    for reading in sorted_readings:
+        value = _first_float(reading.get("pm2_5"))
+        if value is None or value <= threshold:
+            finish_event()
+            current = []
+            continue
+        if current and reading["timestamp"] - current[-1]["timestamp"] > timedelta(minutes=20):
+            finish_event()
+            current = []
+        current.append({"timestamp": reading["timestamp"], "pm2_5": value})
+
+    finish_event()
+    return events
+
+
+def _history_timestamp(value):
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    timestamp = str(value)
+    try:
+        numeric_timestamp = float(timestamp)
+        return datetime.fromtimestamp(numeric_timestamp, tz=timezone.utc)
+    except ValueError:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
+
+
+def _decode_history(payload):
+    fields = payload.get("fields", [])
+    rows = payload.get("data", [])
+    decoded = []
+    for row in rows:
+        if isinstance(row, str):
+            values = row.split(",")
+        elif isinstance(row, dict):
+            values = row
+        else:
+            values = dict(zip(fields, row))
+        timestamp = values.get("time_stamp") or values.get("timestamp")
+        pm2_5 = _first_float(
+            values.get("pm2.5_atm"),
+            values.get("pm2.5"),
+            values.get("pm2.5_cf_1"),
+        )
+        if timestamp is None or pm2_5 is None:
+            continue
+        decoded.append({"timestamp": _history_timestamp(timestamp), "pm2_5": pm2_5})
+    return decoded
+
+
+def load_spike_events(force_refresh=False):
+    api_key = os.environ.get("PURPLEAIR_API_KEY")
+    connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+    if not api_key:
+        raise RuntimeError("PURPLEAIR_API_KEY is not set. Add a PurpleAir READ key to the project root .env file.")
+    if not connection_string:
+        raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING environment variable is not set.")
+
+    now = time.time()
+    if not force_refresh and _event_cache["data"] and _event_cache["expires_at"] > now:
+        return _event_cache["data"]
+
+    service = TableServiceClient.from_connection_string(conn_str=connection_string)
+    registry = service.get_table_client("SensorRegistry")
+    sensors = [
+        {
+            "id": str(entity["RowKey"]),
+            "name": entity.get("Name") or f"Sensor {entity['RowKey']}",
+            "location": entity.get("Location") or "",
+        }
+        for entity in registry.list_entities()
+    ]
+
+    end_time = datetime.now(timezone.utc)
+    start_time = end_time - timedelta(days=HISTORY_DAYS)
+    events = []
+    errors = []
+    next_request_at = time.monotonic()
+    for sensor in sensors:
+        delay = next_request_at - time.monotonic()
+        if delay > 0:
+            time.sleep(delay)
+        try:
+            response = requests.get(
+                PURPLEAIR_HISTORY_URL.format(sensor_id=sensor["id"]),
+                headers={"X-API-Key": api_key},
+                params={
+                    "start_timestamp": int(start_time.timestamp()),
+                    "end_timestamp": int(end_time.timestamp()),
+                    "average": 10,
+                    "fields": "pm2.5_atm",
+                },
+                timeout=30,
+            )
+            next_request_at = time.monotonic() + 1
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("error"):
+                raise RuntimeError(payload.get("description") or payload["error"])
+            events.extend(detect_spike_events(sensor, _decode_history(payload)))
+        except (requests.RequestException, ValueError, KeyError, RuntimeError) as exc:
+            errors.append({"sensor_id": sensor["id"], "sensor_name": sensor["name"], "message": str(exc)[:200]})
+
+    events.sort(key=lambda event: event["start"], reverse=True)
+    data = {
+        "events": events,
+        "sensor_count": len(sensors),
+        "failed_sensor_count": len(errors),
+        "errors": errors[:10],
+        "window_start": start_time.isoformat(),
+        "window_end": end_time.isoformat(),
+        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "threshold": SPIKE_THRESHOLD,
+    }
+    _event_cache.update({"expires_at": time.time() + HISTORY_CACHE_SECONDS, "data": data})
+    return data
 
 
 def load_dashboard_data():
@@ -156,6 +307,18 @@ def api_sensors():
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"sensors": data["sensors"], "summary": data["summary"]})
+
+
+@app.route('/api/events')
+def api_events():
+    try:
+        data = load_spike_events(force_refresh=request.args.get("refresh") == "1")
+    except RuntimeError as exc:
+        return jsonify({"error": str(exc)}), 503
+    except Exception as exc:
+        app.logger.exception("Unable to load PurpleAir spike history")
+        return jsonify({"error": str(exc)}), 500
+    return jsonify(data)
 
 
 if __name__ == '__main__':

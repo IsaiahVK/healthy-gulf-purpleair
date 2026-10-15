@@ -107,6 +107,8 @@ python test_local_ingest.py
 This fetches readings for all active sensors in `SensorRegistry` in 1 API call and writes them to Azure Table Storage.
 
 ### 3. Run the Dashboard Locally
+To load historical data in the Events tab, add a PurpleAir **READ** API key to the project-root `.env` file as `PURPLEAIR_API_KEY`. The tab checks registered sensors for the previous 7 days of 10-minute PM2.5 history and caches results in the running app for 15 minutes.
+
 ```powershell
 cd display_webapp
 python app.py

@@ -47,6 +47,8 @@
         .aqi-badge { display: inline-block; min-width: 2.5rem; padding: .2rem .5rem; border-radius: 1rem; font-weight: 700; text-align: center; }
         .sensor-link { cursor: pointer; text-decoration: none; }
         .sensor-link:hover { text-decoration: underline; }
+        .event-state { min-height: 1.5rem; }
+        .event-table th { white-space: nowrap; }
     </style>
 </head>
 <body>
@@ -58,6 +60,16 @@
     </nav>
 
     <div class="container pb-5">
+        <ul class="nav nav-tabs mb-3" role="tablist">
+            <li class="nav-item" role="presentation">
+                <button class="nav-link active" id="dashboard-tab" data-bs-toggle="tab" data-bs-target="#dashboard-panel" type="button" role="tab" aria-controls="dashboard-panel" aria-selected="true">Dashboard</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="events-tab" data-bs-toggle="tab" data-bs-target="#events-panel" type="button" role="tab" aria-controls="events-panel" aria-selected="false">Events</button>
+            </li>
+        </ul>
+        <div class="tab-content">
+        <section class="tab-pane fade show active" id="dashboard-panel" role="tabpanel" aria-labelledby="dashboard-tab" tabindex="0">
 
         <!-- Map -->
         <div class="mb-4">
@@ -159,8 +171,52 @@
             AQI is calculated from raw PurpleAir PM2.5 using the US EPA breakpoints, with no EPA correction factor applied.
             Treat it as an estimate rather than an official AQI.
         </p>
+        </section>
+
+        <section class="tab-pane fade" id="events-panel" role="tabpanel" aria-labelledby="events-tab" tabindex="0">
+            <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3">
+                <div>
+                    <h2 class="h4 mb-1">Recent PM2.5 spikes</h2>
+                    <p class="text-muted small mb-0">Raw PurpleAir 10-minute PM2.5 readings above 35 µg/m³ over the last 7 days. Duration is estimated from the sampled readings.</p>
+                </div>
+                <div class="d-flex flex-wrap align-items-end gap-2">
+                    <div>
+                        <label class="form-label small mb-1" for="event-sensor-filter">Sensor</label>
+                        <select class="form-select form-select-sm" id="event-sensor-filter" aria-label="Filter events by sensor">
+                            <option value="all">All sensors</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-outline-secondary btn-sm" id="refresh-events" type="button" title="Fetch the latest historical readings">
+                        <span aria-hidden="true">&#8635;</span> Refresh history
+                    </button>
+                </div>
+            </div>
+            <div id="events-state" class="event-state small text-muted mb-2" aria-live="polite">Open Events to load historical readings.</div>
+            <div id="events-errors" class="alert alert-warning py-2 small d-none" role="status"></div>
+            <div class="card border-0 shadow-sm">
+                <div class="table-responsive">
+                    <table class="table table-hover mb-0 align-middle event-table">
+                        <thead class="table-light">
+                            <tr>
+                                <th class="ps-3">Start / end</th>
+                                <th>Sensor</th>
+                                <th>Duration</th>
+                                <th>Peak PM2.5</th>
+                                <th>Mean PM2.5</th>
+                                <th class="pe-3">Readings</th>
+                            </tr>
+                        </thead>
+                        <tbody id="events-body">
+                            <tr><td colspan="6" class="p-4 text-center text-muted">Historical events have not been loaded.</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+        </div>
     </div>
 
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
     <script>
         const SENSORS = {{ sensors | tojson }};
@@ -285,6 +341,84 @@
             el.textContent = timeAgo(el.dataset.ts);
             el.title = formatLocal(el.dataset.ts);
         });
+
+        const eventsBody = document.getElementById("events-body");
+        const eventsState = document.getElementById("events-state");
+        const eventsErrors = document.getElementById("events-errors");
+        const refreshEventsButton = document.getElementById("refresh-events");
+        const eventSensorFilter = document.getElementById("event-sensor-filter");
+        let eventsLoaded = false;
+        let loadedEvents = null;
+
+        const sensorOptions = new Map(SENSORS.map(sensor => [String(sensor.id), sensor.name]));
+        sensorOptions.forEach((name, id) => {
+            const option = document.createElement("option");
+            option.value = id;
+            option.textContent = `${name} (#${id})`;
+            eventSensorFilter.append(option);
+        });
+
+        function formatDuration(minutes) {
+            if (minutes < 60) return `${minutes} min`;
+            const hours = Math.floor(minutes / 60);
+            const remainingMinutes = minutes % 60;
+            return remainingMinutes ? `${hours} hr ${remainingMinutes} min` : `${hours} hr`;
+        }
+
+        function renderEvents(data) {
+            loadedEvents = data;
+            const selectedSensor = eventSensorFilter.value;
+            const visibleEvents = selectedSensor === "all"
+                ? data.events
+                : data.events.filter(event => String(event.sensor_id) === selectedSensor);
+            eventsBody.innerHTML = visibleEvents.length ? visibleEvents.map(event => `
+                <tr>
+                    <td class="ps-3 text-nowrap"><div>${escapeHtml(formatLocal(event.start))}</div><div class="small text-muted">to ${escapeHtml(formatLocal(event.end))}</div></td>
+                    <td><a class="fw-semibold" href="https://map.purpleair.com/?select=${encodeURIComponent(event.sensor_id)}" target="_blank" rel="noopener">${escapeHtml(event.sensor_name)}</a><div class="small text-muted">#${escapeHtml(event.sensor_id)}${event.location ? ` · ${escapeHtml(event.location)}` : ""}</div></td>
+                    <td class="text-nowrap">${escapeHtml(formatDuration(event.duration_minutes))}</td>
+                    <td class="text-nowrap fw-semibold">${Number(event.peak_pm2_5).toFixed(1)} µg/m³</td>
+                    <td class="text-nowrap">${Number(event.mean_pm2_5).toFixed(1)} µg/m³</td>
+                    <td class="pe-3">${event.reading_count}</td>
+                </tr>`).join("") : `<tr><td colspan="6" class="p-4 text-center text-muted">${selectedSensor === "all" ? "No readings above 35 µg/m³ were found in the selected period." : "No spike events for this sensor in the selected period."}</td></tr>`;
+            const sensorLabel = selectedSensor === "all" ? `${data.sensor_count} sensors` : eventSensorFilter.selectedOptions[0].textContent;
+            eventsState.textContent = `Showing ${visibleEvents.length} of ${data.events.length} event${data.events.length === 1 ? "" : "s"} for ${sensorLabel}. History checked ${formatLocal(data.fetched_at)}.`;
+            if (data.failed_sensor_count) {
+                const failures = data.errors.map(error => `${error.sensor_name} (#${error.sensor_id}): ${error.message}`).join("; ");
+                eventsErrors.textContent = `History could not be loaded for ${data.failed_sensor_count} of ${data.sensor_count} sensors.${failures ? ` ${failures}` : ""}`;
+                eventsErrors.classList.remove("d-none");
+            } else {
+                eventsErrors.classList.add("d-none");
+                eventsErrors.textContent = "";
+            }
+        }
+
+        async function loadEvents(refresh = false) {
+            refreshEventsButton.disabled = true;
+            eventsState.textContent = "Loading 10-minute history from PurpleAir…";
+            eventsErrors.classList.add("d-none");
+            eventsBody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-muted">Loading historical readings…</td></tr>';
+            try {
+                const response = await fetch(`/api/events${refresh ? "?refresh=1" : ""}`);
+                const data = await response.json();
+                if (!response.ok) throw new Error(data.error || "Could not load spike history.");
+                renderEvents(data);
+                eventsLoaded = true;
+            } catch (error) {
+                eventsState.textContent = "Spike history could not be loaded.";
+                eventsBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-danger">${escapeHtml(error.message)}</td></tr>`;
+            } finally {
+                refreshEventsButton.disabled = false;
+            }
+        }
+
+        document.getElementById("events-tab").addEventListener("shown.bs.tab", () => {
+            if (!eventsLoaded) loadEvents();
+        });
+        eventSensorFilter.addEventListener("change", () => {
+            if (loadedEvents) renderEvents(loadedEvents);
+        });
+        document.getElementById("dashboard-tab").addEventListener("shown.bs.tab", () => map.invalidateSize());
+        refreshEventsButton.addEventListener("click", () => loadEvents(true));
     </script>
 </body>
 </html>
