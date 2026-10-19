@@ -1,36 +1,75 @@
 # Healthy Gulf - PurpleAir Air Quality Monitoring
 
-A cloud-native air quality ingestion and visualization pipeline built on Microsoft Azure. It monitors PurpleAir air quality sensors across the Gulf Coast region, ingests PM2.5, temperature, and humidity on a 5-minute schedule, and presents the data on an interactive map dashboard.
+A cloud-native air quality ingestion and visualization pipeline built on Microsoft Azure. It monitors PurpleAir air quality sensors across the Gulf Coast region, supports both scheduled REST API polling and direct device telemetry push (webhooks), and presents the data on an interactive map dashboard.
 
 ---
 
 ## 🏗️ Architecture
 
 ```mermaid
-flowchart LR
-    A[PurpleAir API\n/v1/sensors] -->|Batched GET| B(Azure Function\nTimer Trigger: 5 min)
-    B -->|Active Sensors| C[(SensorRegistry\nTable)]
-    B -->|Writes Readings| D[(PurpleAirData\nTable)]
-    C -->|Coordinates & Names| E(Azure App Service\nFlask Dashboard)
-    D -->|Latest Readings| E
-    E -->|Interactive Map| F[Browser Dashboard\nLeaflet + OSM]
+flowchart TD
+    subgraph Ingestion["Ingestion Layer (Azure Function App)"]
+        subgraph ScheduledPull["Method 1: Scheduled Pull (API)"]
+            A1[PurpleAir API\n/v1/sensors] -->|Batched GET\nEvery 5 min| B1[Timer Trigger\npurpleair_ingest]
+        end
+        subgraph DirectPush["Method 2: Direct Push (Hardware)"]
+            A2[Owned PurpleAir Sensor\nData Processor] -->|HTTP POST\nReal-time Telemetry| B2[HTTP Trigger\n/api/sensor_push]
+        end
+    end
+
+    subgraph Storage["Storage Layer (Azure Table Storage)"]
+        C[(SensorRegistry\nTable)]
+        D[(PurpleAirData\nTable)]
+    end
+
+    subgraph Frontend["Presentation Layer (Azure App Service)"]
+        E(Flask Web App\nDashboard)
+        F[Interactive Map\nLeaflet + OSM]
+    end
+
+    B1 -->|Query Active Sensors| C
+    B1 -->|Save Readings| D
+    B2 -->|Save Readings| D
+    B2 -.->|Auto-update Coordinates| C
+
+    C -->|Sensor Names & Coords| E
+    D -->|Latest & Historical Data| E
+    E --> F
 ```
 
-1. **Ingestion Engine (`ingestion_function/`)**:
-   - Azure Function running Python 3.11 with a Timer Trigger (`0 */5 * * * *`, every 5 minutes).
-   - Reads all active sensors from `SensorRegistry`.
-   - Fetches current readings for all sensors in **a single batched PurpleAir API call** (`GET /v1/sensors?show_only=...`) to minimize API point consumption.
-   - Saves new records into the `PurpleAirData` Azure Storage Table.
+1. **Dual Ingestion Engine (`ingestion_function/`)**:
+   - **Method 1 (Scheduled Pull)**: Azure Function Timer Trigger (`0 */5 * * * *`, every 5 minutes). Reads active sensors from `SensorRegistry` and fetches their readings in **a single batched PurpleAir API call** (`GET /v1/sensors?show_only=...`).
+   - **Method 2 (Direct Push / Data Processor)**: Azure Function HTTP Trigger (`POST /api/sensor_push`). Receives real-time telemetry pushed directly by registered PurpleAir sensors, averages dual-channel laser readings (Channels A & B), and writes them immediately to the database.
 
 2. **Database (Azure Table Storage)**:
-   - **`SensorRegistry` Table**: Holds sensor metadata (`PartitionKey="HealthyGulf"`, `RowKey=sensor_id`, `Name`, `Location`, `IsActive`, `Latitude`, `Longitude`).
-   - **`PurpleAirData` Table**: Holds historical readings (`PartitionKey=sensor_id`, `RowKey=timestamp_sensor_id`, `pm2_5`, `temperature`, `humidity`, `timestamp`).
+   - **`SensorRegistry` Table**: Holds sensor metadata (`PartitionKey="HealthyGulf"`, `RowKey=sensor_id`, `Name`, `Location`, `IsActive`, `Latitude`, `Longitude`, `IngestionType`).
+   - **`PurpleAirData` Table**: Holds historical readings (`PartitionKey=sensor_id`, `RowKey=timestamp_sensor_id`, `pm2_5`, `temperature`, `humidity`, `timestamp`, `source`).
 
 3. **Web Dashboard (`display_webapp/`)**:
    - Python Flask application hosted on Azure App Service.
    - Interactive Leaflet/OpenStreetMap map displaying sensor pins colored by US EPA AQI breakpoints (Good, Moderate, USG, Unhealthy, Very Unhealthy, Hazardous).
-   - Clicking a pin opens a modal popup showing live PM2.5, temperature, humidity, last reported time, and a link to the official PurpleAir map.
-   - Summary statistics cards and recent readings table with local timestamp conversion.
+   - Clicking a pin displays live PM2.5, temperature, humidity, last reported time, and a link to the official PurpleAir map.
+   - Automatically unifies both API-pulled and direct-push sensors on the same dashboard.
+
+---
+
+## 📡 Configuring Direct Push (PurpleAir Data Processor)
+
+When registering a sensor that you own, you can configure it to push data directly to Azure using the sensor's **Data Processor** settings:
+
+### Device Configuration Form
+| Field | Value | Notes |
+| :--- | :--- | :--- |
+| **Provider** | `Microsoft Azure` | Or custom HTTP webhook |
+| **API Key** | *Optional shared secret* | e.g. `healthygulf2026` (see Security below) |
+| **Endpoint / ID** | `https://healthygulf-ingest-func.azurewebsites.net/api/sensor_push` | Your Azure Function HTTP route |
+| **HTTP Method** | `POST` | Sensor transmits JSON telemetry |
+
+### Security (API Key Authentication)
+- If you set an API key in the PurpleAir Data Processor form, add an environment variable in your Azure Function App:
+  - In Azure Portal $\rightarrow$ **Function App** $\rightarrow$ `healthygulf-ingest-func` $\rightarrow$ **Environment variables**.
+  - Add `WEBHOOK_API_KEY` = `your-chosen-key`.
+- If `WEBHOOK_API_KEY` is not set in Azure, the endpoint accepts pushes without requiring an API key.
 
 ---
 
@@ -99,16 +138,19 @@ pip install -r display_webapp/requirements.txt
 pip install -r ingestion_function/requirements.txt
 ```
 
-### 2. Test Ingestion Locally
-To execute the exact same batched ingestion logic as the cloud Azure Function:
+### 2. Test Scheduled API Pull Locally
+To execute the exact same batched pull logic as the scheduled Azure Function:
 ```powershell
 python test_local_ingest.py
 ```
-This fetches readings for all active sensors in `SensorRegistry` in 1 API call and writes them to Azure Table Storage.
 
-### 3. Run the Dashboard Locally
-To load historical data in the Events tab, add a PurpleAir **READ** API key to the project-root `.env` file as `PURPLEAIR_API_KEY`. The tab checks registered sensors for the previous 7 days of 10-minute PM2.5 history and caches results in the running app for 15 minutes.
+### 3. Test Direct Push (Webhook) Locally
+To test the direct push payload parsing and database writing without needing the physical sensor online:
+```powershell
+python test_push_ingest.py
+```
 
+### 4. Run the Dashboard Locally
 ```powershell
 cd display_webapp
 python app.py
@@ -127,7 +169,7 @@ Both services are deployed automatically via **GitHub Actions** workflows whenev
 To deploy any changes:
 ```powershell
 git add .
-git commit -m "Update sensors and dashboard"
+git commit -m "Add direct push webhook support for PurpleAir Data Processor"
 git push origin main
 ```
 
@@ -143,4 +185,4 @@ When you want to pause data collection so you do not burn PurpleAir API tokens:
 2. On the **Overview** page, click **⏹️ Stop**.
 3. To resume ingestion at any time, simply click **▶️ Start**.
 
-*(Note: The web dashboard runs independently and will remain online and accessible even while the ingestion function is stopped.)*
+*(Note: Direct pushes also pause while the Function App is stopped. The web dashboard runs independently on App Service and remains online and accessible at all times.)*
