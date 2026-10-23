@@ -1,11 +1,9 @@
 from datetime import datetime, timedelta, timezone
-from flask import Flask, render_template, jsonify, request
+from flask import Flask, render_template, jsonify
 import math
 import os
 from pathlib import Path
-import time
 from dotenv import load_dotenv
-import requests
 from azure.data.tables import TableServiceClient
 from azure.core.exceptions import ResourceNotFoundError
 
@@ -20,9 +18,8 @@ app = Flask(__name__)
 
 SPIKE_THRESHOLD = 35.0
 HISTORY_DAYS = 7
-HISTORY_CACHE_SECONDS = 900
-PURPLEAIR_HISTORY_URL = "https://api.purpleair.com/v1/sensors/{sensor_id}/history"
-_event_cache = {"expires_at": 0, "data": None}
+HISTORY_TABLE = "PurpleAirHistory"
+HISTORY_STATE_TABLE = "PurpleAirHistorySyncState"
 
 # US EPA PM2.5 AQI breakpoints (2024 revision):
 # (pm_low, pm_high, aqi_low, aqi_high, category, pin color, text color)
@@ -103,52 +100,10 @@ def detect_spike_events(sensor, readings, threshold=SPIKE_THRESHOLD):
     return events
 
 
-def _history_timestamp(value):
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value, tz=timezone.utc)
-    timestamp = str(value)
-    try:
-        numeric_timestamp = float(timestamp)
-        return datetime.fromtimestamp(numeric_timestamp, tz=timezone.utc)
-    except ValueError:
-        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
-
-
-def _decode_history(payload):
-    fields = payload.get("fields", [])
-    rows = payload.get("data", [])
-    decoded = []
-    for row in rows:
-        if isinstance(row, str):
-            values = row.split(",")
-        elif isinstance(row, dict):
-            values = row
-        else:
-            values = dict(zip(fields, row))
-        timestamp = values.get("time_stamp") or values.get("timestamp")
-        pm2_5 = _first_float(
-            values.get("pm2.5_atm"),
-            values.get("pm2.5"),
-            values.get("pm2.5_cf_1"),
-        )
-        if timestamp is None or pm2_5 is None:
-            continue
-        decoded.append({"timestamp": _history_timestamp(timestamp), "pm2_5": pm2_5})
-    return decoded
-
-
-def load_spike_events(force_refresh=False):
-    api_key = os.environ.get("PURPLEAIR_API_KEY")
+def load_spike_events():
     connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
-    if not api_key:
-        raise RuntimeError("PURPLEAIR_API_KEY is not set. Add a PurpleAir READ key to the project root .env file.")
     if not connection_string:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING environment variable is not set.")
-
-    now = time.time()
-    if not force_refresh and _event_cache["data"] and _event_cache["expires_at"] > now:
-        return _event_cache["data"]
 
     service = TableServiceClient.from_connection_string(conn_str=connection_string)
     registry = service.get_table_client("SensorRegistry")
@@ -162,48 +117,84 @@ def load_spike_events(force_refresh=False):
     ]
 
     end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(days=HISTORY_DAYS)
+    start_time = end_time - timedelta(days=HISTORY_DAYS, minutes=20)
     events = []
     errors = []
-    next_request_at = time.monotonic()
+    history = service.get_table_client(HISTORY_TABLE)
+    state = service.get_table_client(HISTORY_STATE_TABLE)
+    try:
+        checkpoints = list(state.query_entities(
+            query_filter="PartitionKey eq @partition_key",
+            parameters={"partition_key": "PurpleAirHistory"},
+        ))
+    except ResourceNotFoundError:
+        checkpoints = []
+    synced_sensor_ids = {str(checkpoint["RowKey"]) for checkpoint in checkpoints}
+    if not synced_sensor_ids:
+        return {
+            "events": [],
+            "sensor_count": len(sensors),
+            "failed_sensor_count": 0,
+            "errors": [],
+            "fetched_at": end_time.isoformat(),
+            "threshold": SPIKE_THRESHOLD,
+            "history_ready": False,
+            "message": "No stored PurpleAir history yet. Enable the history sync in the Azure Function App and wait for its first run.",
+        }
+
     for sensor in sensors:
-        delay = next_request_at - time.monotonic()
-        if delay > 0:
-            time.sleep(delay)
+        if sensor["id"] not in synced_sensor_ids:
+            errors.append({
+                "sensor_id": sensor["id"],
+                "sensor_name": sensor["name"],
+                "message": "No successful history sync checkpoint for this sensor.",
+            })
+            continue
         try:
-            response = requests.get(
-                PURPLEAIR_HISTORY_URL.format(sensor_id=sensor["id"]),
-                headers={"X-API-Key": api_key},
-                params={
-                    "start_timestamp": int(start_time.timestamp()),
-                    "end_timestamp": int(end_time.timestamp()),
-                    "average": 10,
-                    "fields": "pm2.5_atm",
+            rows = history.query_entities(
+                query_filter="PartitionKey eq @partition_key and timestamp ge @start_timestamp",
+                parameters={
+                    "partition_key": sensor["id"],
+                    "start_timestamp": start_time.isoformat(),
                 },
-                timeout=30,
             )
-            next_request_at = time.monotonic() + 1
-            response.raise_for_status()
-            payload = response.json()
-            if payload.get("error"):
-                raise RuntimeError(payload.get("description") or payload["error"])
-            events.extend(detect_spike_events(sensor, _decode_history(payload)))
-        except (requests.RequestException, ValueError, KeyError, RuntimeError) as exc:
+            readings = []
+            for row in rows:
+                timestamp = row.get("timestamp")
+                pm2_5 = _first_float(row.get("pm2_5"))
+                if timestamp and pm2_5 is not None:
+                    parsed = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
+                    if parsed.tzinfo is None:
+                        parsed = parsed.replace(tzinfo=timezone.utc)
+                    readings.append({"timestamp": parsed, "pm2_5": pm2_5})
+            events.extend(detect_spike_events(sensor, readings))
+        except ResourceNotFoundError:
+            return {
+                "events": [],
+                "sensor_count": len(sensors),
+                "failed_sensor_count": 0,
+                "errors": [],
+                "fetched_at": end_time.isoformat(),
+                "threshold": SPIKE_THRESHOLD,
+                "history_ready": False,
+                "message": "No stored PurpleAir history yet. Enable the history sync in the Azure Function App and wait for its first run.",
+            }
+        except (ValueError, KeyError, TypeError) as exc:
             errors.append({"sensor_id": sensor["id"], "sensor_name": sensor["name"], "message": str(exc)[:200]})
 
     events.sort(key=lambda event: event["start"], reverse=True)
-    data = {
+    return {
         "events": events,
         "sensor_count": len(sensors),
         "failed_sensor_count": len(errors),
         "errors": errors[:10],
         "window_start": start_time.isoformat(),
         "window_end": end_time.isoformat(),
-        "fetched_at": datetime.now(timezone.utc).isoformat(),
+        "fetched_at": end_time.isoformat(),
         "threshold": SPIKE_THRESHOLD,
+        "history_ready": True,
+        "message": "",
     }
-    _event_cache.update({"expires_at": time.time() + HISTORY_CACHE_SECONDS, "data": data})
-    return data
 
 
 def load_dashboard_data():
@@ -312,7 +303,7 @@ def api_sensors():
 @app.route('/api/events')
 def api_events():
     try:
-        data = load_spike_events(force_refresh=request.args.get("refresh") == "1")
+        data = load_spike_events()
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 503
     except Exception as exc:

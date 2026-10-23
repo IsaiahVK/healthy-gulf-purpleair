@@ -9,10 +9,11 @@ All active sensors in the SensorRegistry table are fetched with ONE PurpleAir
 request (GET /v1/sensors?show_only=...), requesting only the fields we store.
 """
 import logging
-from datetime import datetime, timezone
+import time
+from datetime import datetime, timedelta, timezone
 
 import requests
-from azure.core.exceptions import ResourceExistsError
+from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
 from azure.data.tables import TableServiceClient
 
 PURPLEAIR_SENSORS_URL = "https://api.purpleair.com/v1/sensors"
@@ -23,6 +24,11 @@ MAX_SENSORS_PER_REQUEST = 100
 
 REGISTRY_TABLE = "SensorRegistry"
 DATA_TABLE = "PurpleAirData"
+HISTORY_TABLE = "PurpleAirHistory"
+HISTORY_STATE_TABLE = "PurpleAirHistorySyncState"
+HISTORY_FIELDS = ["pm2.5_atm"]
+HISTORY_INITIAL_DAYS = 7
+HISTORY_OVERLAP_MINUTES = 20
 
 # PurpleAir field name -> Table Storage property name (property names can't contain dots)
 NUMERIC_FIELDS = {
@@ -41,6 +47,119 @@ def _get_or_create_table(service, name):
     except ResourceExistsError:
         pass
     return client
+
+
+def _parse_history_timestamp(value):
+    if isinstance(value, (int, float)):
+        return datetime.fromtimestamp(value, tz=timezone.utc)
+    timestamp = str(value)
+    try:
+        return datetime.fromtimestamp(float(timestamp), tz=timezone.utc)
+    except ValueError:
+        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
+        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+def _decode_history(payload):
+    fields = payload.get("fields", [])
+    readings = []
+    for row in payload.get("data", []):
+        if isinstance(row, dict):
+            values = row
+        elif isinstance(row, str):
+            values = dict(zip(fields, row.split(",")))
+        else:
+            values = dict(zip(fields, row))
+        timestamp = values.get("time_stamp") or values.get("timestamp")
+        pm2_5 = values.get("pm2.5_atm")
+        if timestamp is None or pm2_5 is None:
+            continue
+        try:
+            readings.append({"timestamp": _parse_history_timestamp(timestamp), "pm2_5": float(pm2_5)})
+        except (TypeError, ValueError, OverflowError):
+            continue
+    return readings
+
+
+def run_history_sync(api_key, connection_string, logger=logging, now=None):
+    """Backfill 7 days once, then incrementally sync each sensor's 10-minute history."""
+    service = TableServiceClient.from_connection_string(conn_str=connection_string)
+    registry = service.get_table_client(REGISTRY_TABLE)
+    history = _get_or_create_table(service, HISTORY_TABLE)
+    state = _get_or_create_table(service, HISTORY_STATE_TABLE)
+    sync_time = now or datetime.now(timezone.utc)
+    if sync_time.tzinfo is None:
+        sync_time = sync_time.replace(tzinfo=timezone.utc)
+    sync_time = sync_time.astimezone(timezone.utc)
+
+    sensors = list(registry.query_entities("IsActive eq true"))
+    if not sensors:
+        logger.warning("No active sensors found in SensorRegistry. History sync skipped.")
+        return {"requested": 0, "saved": 0, "failed": []}
+
+    saved = 0
+    failed = []
+    next_request_at = time.monotonic()
+    for sensor in sensors:
+        sensor_id = str(sensor["RowKey"])
+        try:
+            try:
+                checkpoint = state.get_entity(partition_key="PurpleAirHistory", row_key=sensor_id)
+                previous_timestamp = _parse_history_timestamp(checkpoint["last_timestamp"])
+                start_time = previous_timestamp - timedelta(minutes=HISTORY_OVERLAP_MINUTES)
+            except ResourceNotFoundError:
+                start_time = sync_time - timedelta(days=HISTORY_INITIAL_DAYS)
+
+            delay = next_request_at - time.monotonic()
+            if delay > 0:
+                time.sleep(delay)
+            response = requests.get(
+                f"{PURPLEAIR_SENSORS_URL}/{sensor_id}/history",
+                headers={"X-API-Key": api_key},
+                params={
+                    "start_timestamp": int(start_time.timestamp()),
+                    "end_timestamp": int(sync_time.timestamp()),
+                    "average": 10,
+                    "fields": ",".join(HISTORY_FIELDS),
+                },
+                timeout=30,
+            )
+            next_request_at = time.monotonic() + 1
+            response.raise_for_status()
+            payload = response.json()
+            if payload.get("error"):
+                raise RuntimeError(payload.get("description") or payload["error"])
+
+            sensor_name = sensor.get("Name") or f"Sensor {sensor_id}"
+            entities = []
+            for reading in _decode_history(payload):
+                timestamp = reading["timestamp"]
+                entities.append({
+                    "PartitionKey": sensor_id,
+                    "RowKey": timestamp.strftime("%Y%m%d%H%M%S"),
+                    "timestamp": timestamp.isoformat(),
+                    "sensor_name": sensor_name,
+                    "pm2_5": reading["pm2_5"],
+                })
+
+            for offset in range(0, len(entities), 100):
+                batch = entities[offset:offset + 100]
+                history.submit_transaction([("upsert", entity) for entity in batch])
+
+            state.upsert_entity(entity={
+                "PartitionKey": "PurpleAirHistory",
+                "RowKey": sensor_id,
+                "last_timestamp": sync_time.isoformat(),
+                "last_sync": sync_time.isoformat(),
+            })
+            saved += len(entities)
+            logger.info(f"History sync #{sensor_id} ({sensor_name}): saved {len(entities)} reading(s).")
+        except Exception as exc:
+            failed.append(sensor_id)
+            logger.exception(f"History sync failed for sensor #{sensor_id}: {exc}")
+
+    logger.info(f"History sync complete: saved {saved} reading(s); failed sensors: {len(failed)}.")
+    return {"requested": len(sensors), "saved": saved, "failed": failed}
 
 
 def fetch_sensor_readings(api_key, sensor_ids):

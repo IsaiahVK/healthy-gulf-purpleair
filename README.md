@@ -107,13 +107,25 @@ python test_local_ingest.py
 This fetches readings for all active sensors in `SensorRegistry` in 1 API call and writes them to Azure Table Storage.
 
 ### 3. Run the Dashboard Locally
-To load historical data in the Events tab, add a PurpleAir **READ** API key to the project-root `.env` file as `PURPLEAIR_API_KEY`. The tab checks registered sensors for the previous 7 days of 10-minute PM2.5 history and caches results in the running app for 15 minutes.
+The Events tab reads its historical readings from the `PurpleAirHistory` Azure Table. The Function App populates this table on an hourly schedule. For local Function runs, configure `PURPLEAIR_API_KEY`, `AZURE_STORAGE_CONNECTION_STRING`, `PURPLEAIR_API_CALLS_ENABLED=true`, and `PURPLEAIR_HISTORY_SYNC_ENABLED=true` in the Function App's local settings.
 
 ```powershell
 cd display_webapp
 python app.py
 ```
 Open [http://localhost:8000](http://localhost:8000) in your web browser.
+
+### 4. Configure Events History in Azure
+
+1. Deploy the latest `main` branch so the Function App contains the scheduled history sync and the web app reads from `PurpleAirHistory`.
+2. In Azure Portal, open the **Function App** `healthygulf-ingest-func` and go to **Settings → Environment variables → App settings**.
+3. Set `PURPLEAIR_API_KEY` to a PurpleAir **READ** key and `AZURE_STORAGE_CONNECTION_STRING` to the storage account connection string used by the dashboard.
+4. Set `PURPLEAIR_API_CALLS_ENABLED` to `true` and `PURPLEAIR_HISTORY_SYNC_ENABLED` to `true`. Save the settings and allow the Function App to restart.
+5. In Azure Portal, open the **App Service** `healthygulf-dashboard-app` and confirm `AZURE_STORAGE_CONNECTION_STRING` points to the same storage account. Save if changed.
+6. The history timer runs hourly, at the top of the hour. On its first successful run, it backfills seven days; later runs fetch from each sensor's checkpoint with a 20-minute overlap. The Function creates `PurpleAirHistory` and `PurpleAirHistorySyncState` automatically. Wait for the next hourly run before expecting historical events.
+7. Open the dashboard's **Events** tab. It reads Azure Table Storage only; opening or refreshing the page does not call PurpleAir.
+
+To pause only historical calls, set `PURPLEAIR_HISTORY_SYNC_ENABLED` to `false`; the existing five-minute current-reading ingestion continues. To pause **all** PurpleAir API calls, set `PURPLEAIR_API_CALLS_ENABLED` to `false`. To resume, set the relevant setting back to `true`. Azure restarts the Function App after saving app settings.
 
 ---
 

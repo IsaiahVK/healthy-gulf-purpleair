@@ -1,8 +1,11 @@
 import unittest
 from datetime import datetime, timedelta, timezone
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
-from display_webapp.app import _decode_history, app, detect_spike_events
+from azure.core.exceptions import ResourceNotFoundError
+
+from display_webapp.app import app, detect_spike_events
+from ingestion_function.ingestion import _decode_history
 
 
 class SpikeEventTests(unittest.TestCase):
@@ -76,14 +79,59 @@ class SpikeEventTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Recent PM2.5 spikes", response.data)
-        self.assertIn(b"refresh-events", response.data)
+        self.assertIn(b"Stored PurpleAir 10-minute", response.data)
+        self.assertIn(b"event-sensor-filter", response.data)
+        self.assertNotIn(b"refresh-events", response.data)
 
-    def test_events_endpoint_reports_missing_api_key(self):
-        with patch.dict("os.environ", {"PURPLEAIR_API_KEY": ""}):
+    def test_events_endpoint_reads_storage_without_purpleair_key(self):
+        registry = MagicMock()
+        registry.list_entities.return_value = [{"RowKey": "123", "Name": "Test sensor", "Location": "Test location"}]
+        history = MagicMock()
+        history.query_entities.return_value = [
+            {"timestamp": self.start.isoformat(), "pm2_5": 36.5},
+            {"timestamp": (self.start + timedelta(minutes=10)).isoformat(), "pm2_5": 40.0},
+        ]
+        state = MagicMock()
+        state.query_entities.return_value = [{"RowKey": "123"}]
+        service = MagicMock()
+        service.get_table_client.side_effect = lambda table: {
+            "SensorRegistry": registry,
+            "PurpleAirHistory": history,
+            "PurpleAirHistorySyncState": state,
+        }[table]
+
+        with patch.dict("os.environ", {"AZURE_STORAGE_CONNECTION_STRING": "storage", "PURPLEAIR_API_KEY": ""}), \
+                patch("display_webapp.app.TableServiceClient.from_connection_string", return_value=service):
             response = app.test_client().get("/api/events")
 
-        self.assertEqual(response.status_code, 503)
-        self.assertIn(b"PurpleAir READ key", response.data)
+        self.assertEqual(response.status_code, 200)
+        payload = response.get_json()
+        self.assertTrue(payload["history_ready"])
+        self.assertEqual(len(payload["events"]), 1)
+        self.assertEqual(payload["events"][0]["peak_pm2_5"], 40.0)
+        history.query_entities.assert_called_once()
+
+    def test_events_endpoint_explains_when_history_table_is_missing(self):
+        registry = MagicMock()
+        registry.list_entities.return_value = [{"RowKey": "123", "Name": "Test sensor"}]
+        history = MagicMock()
+        history.query_entities.side_effect = ResourceNotFoundError("table missing")
+        state = MagicMock()
+        state.query_entities.return_value = [{"RowKey": "123"}]
+        service = MagicMock()
+        service.get_table_client.side_effect = lambda table: {
+            "SensorRegistry": registry,
+            "PurpleAirHistory": history,
+            "PurpleAirHistorySyncState": state,
+        }[table]
+
+        with patch.dict("os.environ", {"AZURE_STORAGE_CONNECTION_STRING": "storage"}), \
+                patch("display_webapp.app.TableServiceClient.from_connection_string", return_value=service):
+            response = app.test_client().get("/api/events")
+
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(response.get_json()["history_ready"])
+        self.assertIn("Enable the history sync", response.get_json()["message"])
 
 
 if __name__ == "__main__":

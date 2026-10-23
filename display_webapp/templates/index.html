@@ -177,21 +177,16 @@
             <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3">
                 <div>
                     <h2 class="h4 mb-1">Recent PM2.5 spikes</h2>
-                    <p class="text-muted small mb-0">Raw PurpleAir 10-minute PM2.5 readings above 35 µg/m³ over the last 7 days. Duration is estimated from the sampled readings.</p>
+                    <p class="text-muted small mb-0">Stored PurpleAir 10-minute PM2.5 readings above 35 µg/m³ over the last 7 days. Duration is estimated from the sampled readings.</p>
                 </div>
-                <div class="d-flex flex-wrap align-items-end gap-2">
-                    <div>
-                        <label class="form-label small mb-1" for="event-sensor-filter">Sensor</label>
-                        <select class="form-select form-select-sm" id="event-sensor-filter" aria-label="Filter events by sensor">
-                            <option value="all">All sensors</option>
-                        </select>
-                    </div>
-                    <button class="btn btn-outline-secondary btn-sm" id="refresh-events" type="button" title="Fetch the latest historical readings">
-                        <span aria-hidden="true">&#8635;</span> Refresh history
-                    </button>
+                <div>
+                    <label class="form-label small mb-1" for="event-sensor-filter">Sensor</label>
+                    <select class="form-select form-select-sm" id="event-sensor-filter" aria-label="Filter events by sensor">
+                        <option value="all">All sensors</option>
+                    </select>
                 </div>
             </div>
-            <div id="events-state" class="event-state small text-muted mb-2" aria-live="polite">Open Events to load historical readings.</div>
+            <div id="events-state" class="event-state small text-muted mb-2" aria-live="polite">Open Events to load stored historical readings.</div>
             <div id="events-errors" class="alert alert-warning py-2 small d-none" role="status"></div>
             <div class="card border-0 shadow-sm">
                 <div class="table-responsive">
@@ -207,7 +202,7 @@
                             </tr>
                         </thead>
                         <tbody id="events-body">
-                            <tr><td colspan="6" class="p-4 text-center text-muted">Historical events have not been loaded.</td></tr>
+                            <tr><td colspan="6" class="p-4 text-center text-muted">Stored historical events have not been loaded.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -345,7 +340,6 @@
         const eventsBody = document.getElementById("events-body");
         const eventsState = document.getElementById("events-state");
         const eventsErrors = document.getElementById("events-errors");
-        const refreshEventsButton = document.getElementById("refresh-events");
         const eventSensorFilter = document.getElementById("event-sensor-filter");
         let eventsLoaded = false;
         let loadedEvents = null;
@@ -367,6 +361,11 @@
 
         function renderEvents(data) {
             loadedEvents = data;
+            if (!data.history_ready) {
+                eventsBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-muted">${escapeHtml(data.message || "History sync has not completed yet.")}</td></tr>`;
+                eventsState.textContent = "Waiting for the scheduled history sync.";
+                return;
+            }
             const selectedSensor = eventSensorFilter.value;
             const visibleEvents = selectedSensor === "all"
                 ? data.events
@@ -392,13 +391,12 @@
             }
         }
 
-        async function loadEvents(refresh = false) {
-            refreshEventsButton.disabled = true;
-            eventsState.textContent = "Loading 10-minute history from PurpleAir…";
+        async function loadEvents() {
+            eventsState.textContent = "Loading stored history…";
             eventsErrors.classList.add("d-none");
-            eventsBody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-muted">Loading historical readings…</td></tr>';
+            eventsBody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-muted">Loading stored readings…</td></tr>';
             try {
-                const response = await fetch(`/api/events${refresh ? "?refresh=1" : ""}`);
+                const response = await fetch("/api/events");
                 const data = await response.json();
                 if (!response.ok) throw new Error(data.error || "Could not load spike history.");
                 renderEvents(data);
@@ -406,8 +404,6 @@
             } catch (error) {
                 eventsState.textContent = "Spike history could not be loaded.";
                 eventsBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-danger">${escapeHtml(error.message)}</td></tr>`;
-            } finally {
-                refreshEventsButton.disabled = false;
             }
         }
 
@@ -418,7 +414,6 @@
             if (loadedEvents) renderEvents(loadedEvents);
         });
         document.getElementById("dashboard-tab").addEventListener("shown.bs.tab", () => map.invalidateSize());
-        refreshEventsButton.addEventListener("click", () => loadEvents(true));
     </script>
 </body>
 </html>
