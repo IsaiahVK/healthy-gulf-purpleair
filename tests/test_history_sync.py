@@ -86,8 +86,14 @@ class HistorySyncTests(unittest.TestCase):
             def timer_trigger(self, **kwargs):
                 return lambda handler: handler
 
+            def route(self, **kwargs):
+                return lambda handler: handler
+
         fake_functions.FunctionApp = FakeFunctionApp
         fake_functions.TimerRequest = object
+        fake_functions.HttpRequest = object
+        fake_functions.HttpResponse = object
+        fake_functions.AuthLevel = MagicMock(ANONYMOUS="anonymous")
         with patch.dict(sys.modules, {"azure.functions": fake_functions}):
             function_app = importlib.import_module("function_app")
             with patch.dict("os.environ", {

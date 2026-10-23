@@ -1,12 +1,13 @@
 """
 Shared PurpleAir -> Azure Table Storage ingestion logic.
 
-Used by:
-  - function_app.py        (the Azure Function timer trigger, every 5 minutes)
-  - test_local_ingest.py   (runs the exact same logic from your machine)
-
-All active sensors in the SensorRegistry table are fetched with ONE PurpleAir
-request (GET /v1/sensors?show_only=...), requesting only the fields we store.
+Supports TWO ingestion methods:
+  1. SCHEDULED PULL:
+     - All active sensors with IngestionType != "push" are fetched in ONE
+       batched GET request from PurpleAir API (GET /v1/sensors?show_only=...).
+  2. DIRECT PUSH (Data Processor / Webhook):
+     - An owned PurpleAir sensor pushes telemetry directly to an HTTP endpoint
+       (POST /api/sensor_push). The payload is parsed and saved to PurpleAirData.
 """
 import logging
 import time
@@ -14,7 +15,7 @@ from datetime import datetime, timedelta, timezone
 
 import requests
 from azure.core.exceptions import ResourceExistsError, ResourceNotFoundError
-from azure.data.tables import TableServiceClient
+from azure.data.tables import TableServiceClient, UpdateMode
 
 PURPLEAIR_SENSORS_URL = "https://api.purpleair.com/v1/sensors"
 # PurpleAir charges API points per field returned, so only request what we store
@@ -38,6 +39,17 @@ NUMERIC_FIELDS = {
     "latitude": "latitude",
     "longitude": "longitude",
 }
+
+
+def _first_float(*values):
+    for v in values:
+        if v is None or v == "":
+            continue
+        try:
+            return float(v)
+        except (ValueError, TypeError):
+            continue
+    return None
 
 
 def _get_or_create_table(service, name):
@@ -161,6 +173,9 @@ def run_history_sync(api_key, connection_string, logger=logging, now=None):
     logger.info(f"History sync complete: saved {saved} reading(s); failed sensors: {len(failed)}.")
     return {"requested": len(sensors), "saved": saved, "failed": failed}
 
+# ==============================================================================
+# METHOD 1: Scheduled Pull (PurpleAir API)
+# ==============================================================================
 
 def fetch_sensor_readings(api_key, sensor_ids):
     """Fetch current readings for many sensors at once. Returns {sensor_id: {field: value}}.
@@ -189,7 +204,7 @@ def fetch_sensor_readings(api_key, sensor_ids):
 
 
 def run_ingestion(api_key, connection_string, logger=logging):
-    """Fetch all active sensors from PurpleAir and store one reading per sensor.
+    """Fetch all active pull sensors from PurpleAir and store one reading per sensor.
 
     Returns a summary dict: {"requested": int, "saved": int, "missing": [sensor_id, ...]}
     """
@@ -202,9 +217,15 @@ def run_ingestion(api_key, connection_string, logger=logging):
         logger.warning("No active sensors found in SensorRegistry. Nothing to ingest.")
         return {"requested": 0, "saved": 0, "missing": []}
 
-    registry_names = {str(s["RowKey"]): s.get("Name") for s in active_sensors}
+    # Filter out sensors configured specifically for direct push (to save API points)
+    pull_sensors = [s for s in active_sensors if (s.get("IngestionType") or "pull").lower() != "push"]
+    if not pull_sensors:
+        logger.info("All active sensors are configured for direct push. No API pull needed.")
+        return {"requested": 0, "saved": 0, "missing": []}
+
+    registry_names = {str(s["RowKey"]): s.get("Name") for s in pull_sensors}
     sensor_ids = list(registry_names)
-    logger.info(f"Requesting {len(sensor_ids)} active sensor(s) from PurpleAir in a single batch...")
+    logger.info(f"Requesting {len(sensor_ids)} active pull sensor(s) from PurpleAir in a single batch...")
 
     # 2. One PurpleAir request for all of them
     readings = fetch_sensor_readings(api_key, sensor_ids)
@@ -226,6 +247,7 @@ def run_ingestion(api_key, connection_string, logger=logging):
             "RowKey": f"{row_prefix}_{sensor_id}",
             "name": record.get("name") or registry_names.get(sensor_id) or f"Sensor {sensor_id}",
             "timestamp": utc_now.isoformat(),
+            "source": "api_pull",
         }
         # Only store values PurpleAir actually returned (null stays absent rather than becoming 0)
         for source_field, property_name in NUMERIC_FIELDS.items():
@@ -245,6 +267,162 @@ def run_ingestion(api_key, connection_string, logger=logging):
             f"{len(missing)} sensor(s) not returned by PurpleAir "
             f"(offline > 7 days, private, or invalid ID): {', '.join(missing)}"
         )
-    logger.info(f"Ingestion complete: {saved}/{len(sensor_ids)} sensor(s) saved.")
+    logger.info(f"API pull complete: {saved}/{len(sensor_ids)} sensor(s) saved.")
     return {"requested": len(sensor_ids), "saved": saved, "missing": missing}
 
+
+# ==============================================================================
+# METHOD 2: Direct Push (PurpleAir Data Processor Webhook)
+# ==============================================================================
+
+def process_sensor_push(payload, connection_string, logger=logging):
+    """Processes an incoming HTTP POST telemetry packet sent directly by a PurpleAir sensor.
+
+    Payload format varies slightly depending on firmware version and whether it's
+    routed directly from device Wi-Fi or via PurpleAir cloud forwarder.
+    Handles dual laser channels (Channel A/B average), temperature, humidity, and location.
+    """
+    if not isinstance(payload, dict):
+        raise ValueError("Payload must be a JSON dictionary")
+
+    logger.info(f"Processing incoming sensor push payload with fields: {list(payload.keys())}")
+
+    # 1. Identify sensor ID / MAC address
+    raw_id = (
+        payload.get("sensor_index")
+        or payload.get("SensorId")
+        or payload.get("sensor_id")
+        or payload.get("id")
+        or payload.get("mac")
+    )
+    if not raw_id:
+        raise ValueError("Payload missing sensor identifier (sensor_index, SensorId, etc.)")
+
+    sensor_id = str(raw_id).strip()
+
+    # 2. Extract environmental readings
+    # PurpleAir dual laser sensors report pm2_5_atm and pm2_5_atm_b (or pm2.5)
+    pm_a = _first_float(
+        payload.get("pm2_5_atm"),
+        payload.get("pm2.5_atm"),
+        payload.get("pm2.5"),
+        payload.get("pm2_5"),
+        payload.get("pm2_5_cf_1"),
+    )
+    pm_b = _first_float(
+        payload.get("pm2_5_atm_b"),
+        payload.get("pm2.5_atm_b"),
+        payload.get("pm2_5_b"),
+    )
+    if pm_a is not None and pm_b is not None:
+        pm2_5 = round((pm_a + pm_b) / 2.0, 2)
+    elif pm_a is not None:
+        pm2_5 = pm_a
+    elif pm_b is not None:
+        pm2_5 = pm_b
+    else:
+        pm2_5 = None
+
+    temp = _first_float(
+        payload.get("current_temp_f"),
+        payload.get("temperature"),
+        payload.get("temp_f"),
+        payload.get("temp"),
+    )
+    humidity = _first_float(
+        payload.get("current_humidity"),
+        payload.get("humidity"),
+    )
+    lat = _first_float(
+        payload.get("latitude"),
+        payload.get("lat"),
+    )
+    lon = _first_float(
+        payload.get("longitude"),
+        payload.get("lon"),
+        payload.get("lng"),
+    )
+
+    # 3. Parse timestamp
+    utc_now = datetime.now(timezone.utc)
+    raw_dt = payload.get("DateTime") or payload.get("timestamp") or payload.get("time_stamp")
+    if raw_dt:
+        try:
+            if isinstance(raw_dt, (int, float)):
+                ts_iso = datetime.fromtimestamp(raw_dt, tz=timezone.utc).isoformat()
+            else:
+                cleaned = str(raw_dt).replace("/", "-").replace("z", "+00:00").replace("Z", "+00:00")
+                parsed = datetime.fromisoformat(cleaned)
+                if parsed.tzinfo is None:
+                    parsed = parsed.replace(tzinfo=timezone.utc)
+                ts_iso = parsed.isoformat()
+        except Exception:
+            ts_iso = utc_now.isoformat()
+    else:
+        ts_iso = utc_now.isoformat()
+
+    service = TableServiceClient.from_connection_string(conn_str=connection_string)
+
+    # 4. Check SensorRegistry for sensor name and metadata
+    registry = _get_or_create_table(service, REGISTRY_TABLE)
+    sensor_name = payload.get("name") or payload.get("sensor_name")
+
+    existing_sensor = None
+    try:
+        existing_sensor = registry.get_entity(partition_key="HealthyGulf", row_key=sensor_id)
+        if not sensor_name:
+            sensor_name = existing_sensor.get("Name")
+    except Exception:
+        pass
+
+    if not sensor_name:
+        sensor_name = f"Sensor {sensor_id}"
+
+    # If coordinates are present in the push payload, ensure registry has them
+    if lat is not None and lon is not None:
+        try:
+            reg_patch = {
+                "PartitionKey": "HealthyGulf",
+                "RowKey": sensor_id,
+                "Name": sensor_name,
+                "Latitude": lat,
+                "Longitude": lon,
+                "IsActive": True,
+                "IngestionType": "push",
+            }
+            registry.upsert_entity(entity=reg_patch, mode=UpdateMode.MERGE)
+        except Exception as e:
+            logger.warning(f"Could not update registry for push sensor {sensor_id}: {str(e)}")
+
+    # 5. Insert reading into PurpleAirData
+    data_client = _get_or_create_table(service, DATA_TABLE)
+    row_prefix = utc_now.strftime("%Y%m%d%H%M%S")
+    entity = {
+        "PartitionKey": sensor_id,
+        "RowKey": f"{row_prefix}_{sensor_id}",
+        "name": sensor_name,
+        "timestamp": ts_iso,
+        "source": "direct_push",
+    }
+    if pm2_5 is not None:
+        entity["pm2_5"] = float(pm2_5)
+    if temp is not None:
+        entity["temperature"] = float(temp)
+    if humidity is not None:
+        entity["humidity"] = float(humidity)
+    if lat is not None:
+        entity["latitude"] = float(lat)
+    if lon is not None:
+        entity["longitude"] = float(lon)
+
+    data_client.upsert_entity(entity=entity)
+    logger.info(f"Direct push saved: #{sensor_id} ({sensor_name}) -> PM2.5={pm2_5}, Temp={temp}F")
+
+    return {
+        "sensor_id": sensor_id,
+        "name": sensor_name,
+        "pm2_5": pm2_5,
+        "temperature": temp,
+        "humidity": humidity,
+        "timestamp": ts_iso,
+    }
