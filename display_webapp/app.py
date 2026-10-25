@@ -1,8 +1,10 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
-from flask import Flask, render_template, jsonify
+from flask import Flask, render_template, jsonify, request
 import math
 import os
 from pathlib import Path
+import time
 from dotenv import load_dotenv
 from azure.data.tables import TableServiceClient
 from azure.core.exceptions import ResourceNotFoundError
@@ -20,6 +22,12 @@ SPIKE_THRESHOLD = 35.0
 HISTORY_DAYS = 7
 HISTORY_TABLE = "PurpleAirHistory"
 HISTORY_STATE_TABLE = "PurpleAirHistorySyncState"
+
+# In-memory caches to make page loads and tab switches instantaneous
+DASHBOARD_CACHE_SECONDS = 45
+EVENTS_CACHE_SECONDS = 300
+_dashboard_cache = {"expires_at": 0, "data": None}
+_events_cache = {"expires_at": 0, "data": None}
 
 # US EPA PM2.5 AQI breakpoints (2024 revision):
 # (pm_low, pm_high, aqi_low, aqi_high, category, pin color, text color)
@@ -100,7 +108,11 @@ def detect_spike_events(sensor, readings, threshold=SPIKE_THRESHOLD):
     return events
 
 
-def load_spike_events():
+def load_spike_events(force_refresh=False):
+    now_ts = time.time()
+    if not force_refresh and _events_cache["data"] and _events_cache["expires_at"] > now_ts:
+        return _events_cache["data"]
+
     connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     if not connection_string:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING environment variable is not set.")
@@ -118,8 +130,6 @@ def load_spike_events():
 
     end_time = datetime.now(timezone.utc)
     start_time = end_time - timedelta(days=HISTORY_DAYS, minutes=20)
-    events = []
-    errors = []
     history = service.get_table_client(HISTORY_TABLE)
     state = service.get_table_client(HISTORY_STATE_TABLE)
     try:
@@ -142,14 +152,14 @@ def load_spike_events():
             "message": "No stored PurpleAir history yet. Enable the history sync in the Azure Function App and wait for its first run.",
         }
 
-    for sensor in sensors:
+    # Parallelize sensor history queries across a thread pool instead of 22 sequential network hops
+    def _fetch_sensor_events(sensor):
         if sensor["id"] not in synced_sensor_ids:
-            errors.append({
+            return None, {
                 "sensor_id": sensor["id"],
                 "sensor_name": sensor["name"],
                 "message": "No successful history sync checkpoint for this sensor.",
-            })
-            continue
+            }
         try:
             rows = history.query_entities(
                 query_filter="PartitionKey eq @partition_key and timestamp ge @start_timestamp",
@@ -167,23 +177,36 @@ def load_spike_events():
                     if parsed.tzinfo is None:
                         parsed = parsed.replace(tzinfo=timezone.utc)
                     readings.append({"timestamp": parsed, "pm2_5": pm2_5})
-            events.extend(detect_spike_events(sensor, readings))
+            return detect_spike_events(sensor, readings), None
         except ResourceNotFoundError:
-            return {
-                "events": [],
-                "sensor_count": len(sensors),
-                "failed_sensor_count": 0,
-                "errors": [],
-                "fetched_at": end_time.isoformat(),
-                "threshold": SPIKE_THRESHOLD,
-                "history_ready": False,
-                "message": "No stored PurpleAir history yet. Enable the history sync in the Azure Function App and wait for its first run.",
-            }
+            raise
         except (ValueError, KeyError, TypeError) as exc:
-            errors.append({"sensor_id": sensor["id"], "sensor_name": sensor["name"], "message": str(exc)[:200]})
+            return None, {"sensor_id": sensor["id"], "sensor_name": sensor["name"], "message": str(exc)[:200]}
+
+    events = []
+    errors = []
+    try:
+        with ThreadPoolExecutor(max_workers=min(10, len(sensors) or 1)) as executor:
+            query_results = list(executor.map(_fetch_sensor_events, sensors))
+        for evs, err in query_results:
+            if evs:
+                events.extend(evs)
+            if err:
+                errors.append(err)
+    except ResourceNotFoundError:
+        return {
+            "events": [],
+            "sensor_count": len(sensors),
+            "failed_sensor_count": 0,
+            "errors": [],
+            "fetched_at": end_time.isoformat(),
+            "threshold": SPIKE_THRESHOLD,
+            "history_ready": False,
+            "message": "No stored PurpleAir history yet. Enable the history sync in the Azure Function App and wait for its first run.",
+        }
 
     events.sort(key=lambda event: event["start"], reverse=True)
-    return {
+    result = {
         "events": events,
         "sensor_count": len(sensors),
         "failed_sensor_count": len(errors),
@@ -195,10 +218,17 @@ def load_spike_events():
         "history_ready": True,
         "message": "",
     }
+    _events_cache["data"] = result
+    _events_cache["expires_at"] = time.time() + EVENTS_CACHE_SECONDS
+    return result
 
 
-def load_dashboard_data():
+def load_dashboard_data(force_refresh=False):
     """Read the registry + readings from Azure Table Storage and shape them for the page."""
+    now_ts = time.time()
+    if not force_refresh and _dashboard_cache["data"] and _dashboard_cache["expires_at"] > now_ts:
+        return _dashboard_cache["data"]
+
     connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     if not connection_string:
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING environment variable is not set.")
@@ -213,10 +243,19 @@ def load_dashboard_data():
     except ResourceNotFoundError:
         pass
 
-    # 2. All readings, newest first.
-    # Fine for a PoC; with months of data, query per sensor partition instead of scanning everything.
+    # 2. Recent readings query:
+    # Instead of scanning every entity across weeks of history (tens of thousands of rows),
+    # query recent window (last 48 hours) to make queries fast and cheap.
+    table = service.get_table_client("PurpleAirData")
+    since_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
     try:
-        readings = list(service.get_table_client("PurpleAirData").list_entities())
+        readings = list(table.query_entities(
+            query_filter="timestamp ge @since",
+            parameters={"since": since_48h}
+        ))
+        # If fewer than 10 readings in the last 48 hours (e.g. offline/testing), fall back gracefully
+        if len(readings) < 10:
+            readings = list(table.list_entities(results_per_page=100))[:100]
     except ResourceNotFoundError:
         readings = []
     readings.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
@@ -248,7 +287,7 @@ def load_dashboard_data():
         sensor.update(pm25_to_aqi(pm25))
         sensors.append(sensor)
 
-    # 4. Recent readings table
+    # 4. Recent readings table (latest 50)
     names = {s["id"]: s["name"] for s in sensors}
     recent = []
     for reading in readings[:50]:
@@ -278,13 +317,17 @@ def load_dashboard_data():
         "last_updated": readings[0].get("timestamp") if readings else None,
     }
 
-    return {"sensors": sensors, "recent": recent, "summary": summary}
+    result = {"sensors": sensors, "recent": recent, "summary": summary}
+    _dashboard_cache["data"] = result
+    _dashboard_cache["expires_at"] = time.time() + DASHBOARD_CACHE_SECONDS
+    return result
 
 
 @app.route('/')
 def index():
     try:
-        data = load_dashboard_data()
+        force = request.args.get("refresh") == "1"
+        data = load_dashboard_data(force_refresh=force)
     except Exception as e:
         return f"Error fetching data from Azure: {str(e)}", 500
     return render_template('index.html', **data, aqi_scale=AQI_BREAKPOINTS)
@@ -294,7 +337,8 @@ def index():
 def api_sensors():
     """JSON version of the per-sensor data (handy for debugging or future front-ends)."""
     try:
-        data = load_dashboard_data()
+        force = request.args.get("refresh") == "1"
+        data = load_dashboard_data(force_refresh=force)
     except Exception as e:
         return jsonify({"error": str(e)}), 500
     return jsonify({"sensors": data["sensors"], "summary": data["summary"]})
@@ -303,7 +347,8 @@ def api_sensors():
 @app.route('/api/events')
 def api_events():
     try:
-        data = load_spike_events()
+        force = request.args.get("refresh") == "1"
+        data = load_spike_events(force_refresh=force)
     except RuntimeError as exc:
         return jsonify({"error": str(exc)}), 503
     except Exception as exc:
