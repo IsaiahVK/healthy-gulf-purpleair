@@ -5,6 +5,7 @@ import json
 import math
 import os
 from pathlib import Path
+import sys
 import tempfile
 import time
 from dotenv import load_dotenv
@@ -35,7 +36,7 @@ CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 def _get_cache(cache_name, mem_cache):
-    if app.testing or app.config.get("TESTING"):
+    if app.testing or app.config.get("TESTING") or "unittest" in sys.modules:
         return None
     now_ts = time.time()
     if mem_cache["data"] and mem_cache["expires_at"] > now_ts:
@@ -56,14 +57,16 @@ def _get_cache(cache_name, mem_cache):
 
 
 def _set_cache(cache_name, mem_cache, data, ttl_seconds):
-    if app.testing or app.config.get("TESTING"):
+    if app.testing or app.config.get("TESTING") or "unittest" in sys.modules:
         return
     expires_at = time.time() + ttl_seconds
     mem_cache["data"] = data
     mem_cache["expires_at"] = expires_at
     cache_file = CACHE_DIR / f"{cache_name}.json"
+    temp_file = CACHE_DIR / f"{cache_name}.json.tmp.{os.getpid()}"
     try:
-        cache_file.write_text(json.dumps({"expires_at": expires_at, "data": data}, default=str), encoding="utf-8")
+        temp_file.write_text(json.dumps({"expires_at": expires_at, "data": data}, default=str), encoding="utf-8")
+        temp_file.replace(cache_file)
     except Exception:
         pass
 
