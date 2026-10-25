@@ -1,9 +1,11 @@
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, jsonify, request
+import json
 import math
 import os
 from pathlib import Path
+import tempfile
 import time
 from dotenv import load_dotenv
 from azure.data.tables import TableServiceClient
@@ -23,11 +25,47 @@ HISTORY_DAYS = 7
 HISTORY_TABLE = "PurpleAirHistory"
 HISTORY_STATE_TABLE = "PurpleAirHistorySyncState"
 
-# In-memory caches to make page loads and tab switches instantaneous
-DASHBOARD_CACHE_SECONDS = 45
+# Multi-process caching across Gunicorn workers (L1 memory + L2 shared temp disk)
+DASHBOARD_CACHE_SECONDS = 180
 EVENTS_CACHE_SECONDS = 300
 _dashboard_cache = {"expires_at": 0, "data": None}
 _events_cache = {"expires_at": 0, "data": None}
+CACHE_DIR = Path(tempfile.gettempdir()) / "healthygulf_cache"
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
+
+
+def _get_cache(cache_name, mem_cache):
+    if app.testing or app.config.get("TESTING"):
+        return None
+    now_ts = time.time()
+    if mem_cache["data"] and mem_cache["expires_at"] > now_ts:
+        return mem_cache["data"]
+    # Shared across Gunicorn workers
+    cache_file = CACHE_DIR / f"{cache_name}.json"
+    if cache_file.is_file():
+        try:
+            payload = json.loads(cache_file.read_text(encoding="utf-8"))
+            if payload.get("expires_at", 0) > now_ts:
+                data = payload.get("data")
+                mem_cache["data"] = data
+                mem_cache["expires_at"] = payload["expires_at"]
+                return data
+        except Exception:
+            pass
+    return None
+
+
+def _set_cache(cache_name, mem_cache, data, ttl_seconds):
+    if app.testing or app.config.get("TESTING"):
+        return
+    expires_at = time.time() + ttl_seconds
+    mem_cache["data"] = data
+    mem_cache["expires_at"] = expires_at
+    cache_file = CACHE_DIR / f"{cache_name}.json"
+    try:
+        cache_file.write_text(json.dumps({"expires_at": expires_at, "data": data}, default=str), encoding="utf-8")
+    except Exception:
+        pass
 
 # US EPA PM2.5 AQI breakpoints (2024 revision):
 # (pm_low, pm_high, aqi_low, aqi_high, category, pin color, text color)
@@ -109,9 +147,10 @@ def detect_spike_events(sensor, readings, threshold=SPIKE_THRESHOLD):
 
 
 def load_spike_events(force_refresh=False):
-    now_ts = time.time()
-    if not force_refresh and _events_cache["data"] and _events_cache["expires_at"] > now_ts:
-        return _events_cache["data"]
+    if not force_refresh:
+        cached = _get_cache("events", _events_cache)
+        if cached is not None:
+            return cached
 
     connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     if not connection_string:
@@ -219,16 +258,16 @@ def load_spike_events(force_refresh=False):
         "history_ready": True,
         "message": "",
     }
-    _events_cache["data"] = result
-    _events_cache["expires_at"] = time.time() + EVENTS_CACHE_SECONDS
+    _set_cache("events", _events_cache, result, EVENTS_CACHE_SECONDS)
     return result
 
 
 def load_dashboard_data(force_refresh=False):
     """Read the registry + readings from Azure Table Storage and shape them for the page."""
-    now_ts = time.time()
-    if not force_refresh and _dashboard_cache["data"] and _dashboard_cache["expires_at"] > now_ts:
-        return _dashboard_cache["data"]
+    if not force_refresh:
+        cached = _get_cache("dashboard", _dashboard_cache)
+        if cached is not None:
+            return cached
 
     connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
     if not connection_string:
@@ -319,8 +358,7 @@ def load_dashboard_data(force_refresh=False):
     }
 
     result = {"sensors": sensors, "recent": recent, "summary": summary}
-    _dashboard_cache["data"] = result
-    _dashboard_cache["expires_at"] = time.time() + DASHBOARD_CACHE_SECONDS
+    _set_cache("dashboard", _dashboard_cache, result, DASHBOARD_CACHE_SECONDS)
     return result
 
 
