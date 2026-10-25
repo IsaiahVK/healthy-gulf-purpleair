@@ -186,7 +186,8 @@ def load_spike_events(force_refresh=False):
     events = []
     errors = []
     try:
-        with ThreadPoolExecutor(max_workers=min(10, len(sensors) or 1)) as executor:
+        worker_count = min(25, max(len(sensors), 1))
+        with ThreadPoolExecutor(max_workers=worker_count) as executor:
             query_results = list(executor.map(_fetch_sensor_events, sensors))
         for evs, err in query_results:
             if evs:
@@ -245,15 +246,15 @@ def load_dashboard_data(force_refresh=False):
 
     # 2. Recent readings query:
     # Instead of scanning every entity across weeks of history (tens of thousands of rows),
-    # query recent window (last 48 hours) to make queries fast and cheap.
+    # query recent window (last 12 hours) to keep queries sub-second and minimize data transfer.
     table = service.get_table_client("PurpleAirData")
-    since_48h = (datetime.now(timezone.utc) - timedelta(hours=48)).isoformat()
+    since_12h = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
     try:
         readings = list(table.query_entities(
             query_filter="timestamp ge @since",
-            parameters={"since": since_48h}
+            parameters={"since": since_12h}
         ))
-        # If fewer than 10 readings in the last 48 hours (e.g. offline/testing), fall back gracefully
+        # If fewer than 10 readings in the last 12 hours (e.g. offline/testing), fall back gracefully
         if len(readings) < 10:
             readings = list(table.list_entities(results_per_page=100))[:100]
     except ResourceNotFoundError:
