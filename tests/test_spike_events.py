@@ -4,7 +4,7 @@ from unittest.mock import MagicMock, patch
 
 from azure.core.exceptions import ResourceNotFoundError
 
-from ingestion_function.ingestion import SPIKE_STATE_PARTITION, process_sensor_push, record_spike_reading
+from ingestion_function.ingestion import SPIKE_STATE_PARTITION, process_sensor_push, record_spike_reading, run_ingestion
 
 
 class FakeTable:
@@ -104,6 +104,26 @@ class RecordSpikeReadingTests(unittest.TestCase):
         [event] = self.event_list()
         self.assertEqual(event["PartitionKey"], "1")
         self.assertEqual(event["reading_count"], 2)
+
+
+class PullUpdatesSpikeEventsTests(unittest.TestCase):
+    def test_offline_sensor_repeating_last_value_counts_once(self):
+        tables = {}
+        service = MagicMock()
+        service.get_table_client.side_effect = lambda table_name: tables.setdefault(table_name, FakeTable())
+        tables["SensorRegistry"] = MagicMock()
+        tables["SensorRegistry"].query_entities.return_value = [{"RowKey": "123", "Name": "Test sensor", "IsActive": True}]
+        response = MagicMock(status_code=200)
+        # PurpleAir keeps returning the same last_seen while a sensor is offline
+        response.json.return_value = {"fields": ["sensor_index", "pm2.5", "last_seen"], "data": [[123, 80.0, 1790812800]]}
+
+        with patch("ingestion_function.ingestion.TableServiceClient.from_connection_string", return_value=service), \
+                patch("ingestion_function.ingestion.requests.get", return_value=response):
+            for _ in range(3):
+                run_ingestion("read-key", "storage")
+
+        [event] = tables["SpikeEvents"].rows.values()
+        self.assertEqual(event["reading_count"], 1)
 
 
 class PushUpdatesSpikeEventsTests(unittest.TestCase):

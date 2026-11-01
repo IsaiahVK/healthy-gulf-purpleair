@@ -55,9 +55,11 @@ def load_readings(data_table, sensor_id, since):
     rows = data_table.query_entities(
         query_filter="PartitionKey eq @sensor_id and RowKey ge @since",
         parameters={"sensor_id": sensor_id, "since": since.strftime("%Y%m%d%H%M%S")},
-        select=["timestamp", "pm2_5"],
+        select=["timestamp", "last_seen", "pm2_5"],
     )
-    readings = [(_parse_timestamp(row["timestamp"]), row.get("pm2_5")) for row in rows if row.get("timestamp")]
+    # Same timing rule as live ingestion: when the sensor measured it, not when we pulled it
+    readings = [(_parse_timestamp(row.get("last_seen") or row["timestamp"]), row.get("pm2_5"))
+                for row in rows if row.get("timestamp")]
     return sorted(readings, key=lambda reading: reading[0])
 
 

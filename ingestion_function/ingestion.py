@@ -224,7 +224,9 @@ def run_ingestion(api_key, connection_string, logger=logging):
         data_client.upsert_entity(entity=entity)
         saved += 1
         try:
-            record_spike_reading(events_table, state_table, sensor_id, entity["name"], utc_now, entity.get("pm2_5"))
+            # Use when the sensor measured it, so an offline sensor's repeated last value isn't counted again
+            reading_time = _parse_timestamp(entity["last_seen"]) if entity.get("last_seen") else utc_now
+            record_spike_reading(events_table, state_table, sensor_id, entity["name"], reading_time, entity.get("pm2_5"))
         except Exception:
             logger.exception(f"Could not update spike events for #{sensor_id}")
         logger.info(f"Saved #{sensor_id} ({entity['name']}): PM2.5={entity.get('pm2_5')}")
