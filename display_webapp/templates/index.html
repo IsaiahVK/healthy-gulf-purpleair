@@ -177,7 +177,7 @@
             <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3">
                 <div>
                     <h2 class="h4 mb-1">Recent PM2.5 spikes</h2>
-                    <p class="text-muted small mb-0">Stored PurpleAir 10-minute PM2.5 readings above 35 µg/m³ over the last 7 days. Duration is estimated from the sampled readings.</p>
+                    <p class="text-muted small mb-0">Periods when a sensor's stored PM2.5 readings stayed above 35 µg/m³ over the last 7 days, updated as each new reading arrives. Duration is estimated from the sampled readings.</p>
                 </div>
                 <div>
                     <label class="form-label small mb-1" for="event-sensor-filter">Sensor</label>
@@ -186,7 +186,7 @@
                     </select>
                 </div>
             </div>
-            <div id="events-state" class="event-state small text-muted mb-2" aria-live="polite">Open Events to load stored historical readings.</div>
+            <div id="events-state" class="event-state small text-muted mb-2" aria-live="polite">Open Events to load recorded spike events.</div>
             <div id="events-errors" class="alert alert-warning py-2 small d-none" role="status"></div>
             <div class="card border-0 shadow-sm">
                 <div class="table-responsive">
@@ -202,7 +202,7 @@
                             </tr>
                         </thead>
                         <tbody id="events-body">
-                            <tr><td colspan="6" class="p-4 text-center text-muted">Stored historical events have not been loaded.</td></tr>
+                            <tr><td colspan="6" class="p-4 text-center text-muted">Spike events have not been loaded.</td></tr>
                         </tbody>
                     </table>
                 </div>
@@ -380,7 +380,7 @@
                     <td class="pe-3">${event.reading_count}</td>
                 </tr>`).join("") : `<tr><td colspan="6" class="p-4 text-center text-muted">${selectedSensor === "all" ? "No readings above 35 µg/m³ were found in the selected period." : "No spike events for this sensor in the selected period."}</td></tr>`;
             const sensorLabel = selectedSensor === "all" ? `${data.sensor_count} sensors` : eventSensorFilter.selectedOptions[0].textContent;
-            eventsState.textContent = `Showing ${visibleEvents.length} of ${data.events.length} event${data.events.length === 1 ? "" : "s"} for ${sensorLabel}. History checked ${formatLocal(data.fetched_at)}.`;
+            eventsState.textContent = `Showing ${visibleEvents.length} of ${data.events.length} event${data.events.length === 1 ? "" : "s"} for ${sensorLabel}. Checked ${formatLocal(data.fetched_at)}.`;
             if (data.failed_sensor_count) {
                 const failures = data.errors.map(error => `${error.sensor_name} (#${error.sensor_id}): ${error.message}`).join("; ");
                 eventsErrors.textContent = `History could not be loaded for ${data.failed_sensor_count} of ${data.sensor_count} sensors.${failures ? ` ${failures}` : ""}`;
@@ -392,9 +392,9 @@
         }
 
         async function loadEvents() {
-            eventsState.textContent = "Loading stored history…";
+            eventsState.textContent = "Loading spike events…";
             eventsErrors.classList.add("d-none");
-            eventsBody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-muted">Loading stored readings…</td></tr>';
+            eventsBody.innerHTML = '<tr><td colspan="6" class="p-4 text-center text-muted">Loading spike events…</td></tr>';
             try {
                 const response = await fetch("/api/events");
                 const data = await response.json();

@@ -1,4 +1,3 @@
-from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, jsonify, request
 import json
@@ -21,10 +20,11 @@ else:
 
 app = Flask(__name__)
 
+# Keep in sync with SPIKE_THRESHOLD in ingestion_function/ingestion.py
 SPIKE_THRESHOLD = 35.0
-HISTORY_DAYS = 7
-HISTORY_TABLE = "PurpleAirHistory"
-HISTORY_STATE_TABLE = "PurpleAirHistorySyncState"
+EVENT_WINDOW_DAYS = 7
+READING_INTERVAL_MINUTES = 5
+SPIKE_EVENTS_TABLE = "SpikeEvents"
 
 # Multi-process caching across Gunicorn workers (L1 memory + L2 shared temp disk)
 DASHBOARD_CACHE_SECONDS = 180
@@ -110,46 +110,26 @@ def _first_float(*values):
     return None
 
 
-def detect_spike_events(sensor, readings, threshold=SPIKE_THRESHOLD):
-    """Group consecutive 10-minute readings above the spike threshold."""
-    sorted_readings = sorted(readings, key=lambda row: row["timestamp"])
-    events = []
-    current = []
-
-    def finish_event():
-        if not current:
-            return
-        values = [row["pm2_5"] for row in current]
-        start = current[0]["timestamp"]
-        end = current[-1]["timestamp"]
-        events.append({
-            "sensor_id": sensor["id"],
-            "sensor_name": sensor["name"],
-            "location": sensor.get("location", ""),
-            "start": start.isoformat(),
-            "end": end.isoformat(),
-            "duration_minutes": max(10, int((end - start).total_seconds() // 60) + 10),
-            "peak_pm2_5": max(values),
-            "mean_pm2_5": sum(values) / len(values),
-            "reading_count": len(values),
-        })
-
-    for reading in sorted_readings:
-        value = _first_float(reading.get("pm2_5"))
-        if value is None or value <= threshold:
-            finish_event()
-            current = []
-            continue
-        if current and reading["timestamp"] - current[-1]["timestamp"] > timedelta(minutes=20):
-            finish_event()
-            current = []
-        current.append({"timestamp": reading["timestamp"], "pm2_5": value})
-
-    finish_event()
-    return events
+def _event_from_entity(entity, sensor):
+    start = datetime.fromisoformat(str(entity["start_time"]))
+    end = datetime.fromisoformat(str(entity["end_time"]))
+    count = int(entity.get("reading_count") or 1)
+    return {
+        "sensor_id": str(entity["PartitionKey"]),
+        "sensor_name": sensor.get("Name") or entity.get("sensor_name") or f"Sensor {entity['PartitionKey']}",
+        "location": sensor.get("Location") or "",
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        # Readings arrive about every 5 minutes, so each one covers roughly that long
+        "duration_minutes": max(READING_INTERVAL_MINUTES, int((end - start).total_seconds() // 60) + READING_INTERVAL_MINUTES),
+        "peak_pm2_5": float(entity["peak_pm2_5"]),
+        "mean_pm2_5": float(entity["total_pm2_5"]) / count,
+        "reading_count": count,
+    }
 
 
 def load_spike_events(force_refresh=False):
+    """Read spike events that the ingestion function records as readings arrive."""
     if not force_refresh:
         cached = _get_cache("events", _events_cache)
         if cached is not None:
@@ -160,100 +140,28 @@ def load_spike_events(force_refresh=False):
         raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING environment variable is not set.")
 
     service = TableServiceClient.from_connection_string(conn_str=connection_string)
-    registry = service.get_table_client("SensorRegistry")
-    sensors = [
-        {
-            "id": str(entity["RowKey"]),
-            "name": entity.get("Name") or f"Sensor {entity['RowKey']}",
-            "location": entity.get("Location") or "",
-        }
-        for entity in registry.list_entities()
-    ]
+    try:
+        registry = {str(entity["RowKey"]): entity for entity in service.get_table_client("SensorRegistry").list_entities()}
+    except ResourceNotFoundError:
+        registry = {}
 
     end_time = datetime.now(timezone.utc)
-    start_time = end_time - timedelta(days=HISTORY_DAYS, minutes=20)
-    history = service.get_table_client(HISTORY_TABLE)
-    state = service.get_table_client(HISTORY_STATE_TABLE)
+    start_time = end_time - timedelta(days=EVENT_WINDOW_DAYS)
     try:
-        checkpoints = list(state.query_entities(
-            query_filter="PartitionKey eq @partition_key",
-            parameters={"partition_key": "PurpleAirHistory"},
+        rows = list(service.get_table_client(SPIKE_EVENTS_TABLE).query_entities(
+            query_filter="end_time ge @start_time",
+            parameters={"start_time": start_time.isoformat()},
         ))
     except ResourceNotFoundError:
-        checkpoints = []
-    synced_sensor_ids = {str(checkpoint["RowKey"]) for checkpoint in checkpoints}
-    if not synced_sensor_ids:
-        return {
-            "events": [],
-            "sensor_count": len(sensors),
-            "failed_sensor_count": 0,
-            "errors": [],
-            "fetched_at": end_time.isoformat(),
-            "threshold": SPIKE_THRESHOLD,
-            "history_ready": False,
-            "message": "No stored PurpleAir history yet. Enable the history sync in the Azure Function App and wait for its first run.",
-        }
+        rows = []
 
-    # Parallelize sensor history queries across a thread pool instead of 22 sequential network hops
-    def _fetch_sensor_events(sensor):
-        if sensor["id"] not in synced_sensor_ids:
-            return None, {
-                "sensor_id": sensor["id"],
-                "sensor_name": sensor["name"],
-                "message": "No successful history sync checkpoint for this sensor.",
-            }
-        try:
-            rows = history.query_entities(
-                query_filter="PartitionKey eq @partition_key and timestamp ge @start_timestamp",
-                parameters={
-                    "partition_key": sensor["id"],
-                    "start_timestamp": start_time.isoformat(),
-                },
-            )
-            readings = []
-            for row in rows:
-                timestamp = row.get("timestamp")
-                pm2_5 = _first_float(row.get("pm2_5"))
-                if timestamp and pm2_5 is not None:
-                    parsed = datetime.fromisoformat(str(timestamp).replace("Z", "+00:00"))
-                    if parsed.tzinfo is None:
-                        parsed = parsed.replace(tzinfo=timezone.utc)
-                    readings.append({"timestamp": parsed, "pm2_5": pm2_5})
-            return detect_spike_events(sensor, readings), None
-        except ResourceNotFoundError:
-            raise
-        except (ValueError, KeyError, TypeError) as exc:
-            return None, {"sensor_id": sensor["id"], "sensor_name": sensor["name"], "message": str(exc)[:200]}
-
-    events = []
-    errors = []
-    try:
-        worker_count = min(25, max(len(sensors), 1))
-        with ThreadPoolExecutor(max_workers=worker_count) as executor:
-            query_results = list(executor.map(_fetch_sensor_events, sensors))
-        for evs, err in query_results:
-            if evs:
-                events.extend(evs)
-            if err:
-                errors.append(err)
-    except ResourceNotFoundError:
-        return {
-            "events": [],
-            "sensor_count": len(sensors),
-            "failed_sensor_count": 0,
-            "errors": [],
-            "fetched_at": end_time.isoformat(),
-            "threshold": SPIKE_THRESHOLD,
-            "history_ready": False,
-            "message": "No stored PurpleAir history yet. Enable the history sync in the Azure Function App and wait for its first run.",
-        }
-
+    events = [_event_from_entity(row, registry.get(str(row["PartitionKey"]), {})) for row in rows]
     events.sort(key=lambda event: event["start"], reverse=True)
     result = {
         "events": events,
-        "sensor_count": len(sensors),
-        "failed_sensor_count": len(errors),
-        "errors": errors[:10],
+        "sensor_count": sum(1 for sensor in registry.values() if sensor.get("IsActive")),
+        "failed_sensor_count": 0,
+        "errors": [],
         "window_start": start_time.isoformat(),
         "window_end": end_time.isoformat(),
         "fetched_at": end_time.isoformat(),

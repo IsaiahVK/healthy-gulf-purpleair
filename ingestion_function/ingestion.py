@@ -8,9 +8,11 @@ Supports TWO ingestion methods:
   2. DIRECT PUSH (Data Processor / Webhook):
      - An owned PurpleAir sensor pushes telemetry directly to an HTTP endpoint
        (POST /api/sensor_push). The payload is parsed and saved to PurpleAirData.
+
+Every saved reading also updates the SpikeEvents table, which the dashboard's
+Events tab reads directly (no PurpleAir history calls).
 """
 import logging
-import time
 from datetime import datetime, timedelta, timezone
 
 import requests
@@ -25,11 +27,12 @@ MAX_SENSORS_PER_REQUEST = 100
 
 REGISTRY_TABLE = "SensorRegistry"
 DATA_TABLE = "PurpleAirData"
-HISTORY_TABLE = "PurpleAirHistory"
-HISTORY_STATE_TABLE = "PurpleAirHistorySyncState"
-HISTORY_FIELDS = ["pm2.5_atm"]
-HISTORY_INITIAL_DAYS = 7
-HISTORY_OVERLAP_MINUTES = 20
+SPIKE_EVENTS_TABLE = "SpikeEvents"
+SPIKE_STATE_TABLE = "SpikeEventState"
+SPIKE_STATE_PARTITION = "SpikeEventState"
+# Keep in sync with SPIKE_THRESHOLD in display_webapp/app.py
+SPIKE_THRESHOLD = 35.0
+SPIKE_MAX_GAP = timedelta(minutes=20)
 
 # PurpleAir field name -> Table Storage property name (property names can't contain dots)
 NUMERIC_FIELDS = {
@@ -61,117 +64,76 @@ def _get_or_create_table(service, name):
     return client
 
 
-def _parse_history_timestamp(value):
-    if isinstance(value, (int, float)):
-        return datetime.fromtimestamp(value, tz=timezone.utc)
-    timestamp = str(value)
+def _parse_timestamp(value):
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+
+
+# ==============================================================================
+# Spike events (kept up to date as each reading is saved)
+# ==============================================================================
+
+def get_spike_tables(service):
+    """Return (events_table, state_table), creating them if needed. Call once per run."""
+    return _get_or_create_table(service, SPIKE_EVENTS_TABLE), _get_or_create_table(service, SPIKE_STATE_TABLE)
+
+
+def record_spike_reading(events_table, state_table, sensor_id, sensor_name, timestamp, pm2_5):
+    """Start, extend, or close a sensor's spike event based on one new reading.
+
+    An event is a run of readings above SPIKE_THRESHOLD; a gap longer than
+    SPIKE_MAX_GAP between above-threshold readings starts a new event.
+    SpikeEventState holds one row per sensor while it has an event in progress.
+    """
+    if pm2_5 is None:
+        return
+    pm2_5 = float(pm2_5)
     try:
-        return datetime.fromtimestamp(float(timestamp), tz=timezone.utc)
-    except ValueError:
-        parsed = datetime.fromisoformat(timestamp.replace("Z", "+00:00"))
-        return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed.astimezone(timezone.utc)
+        state = state_table.get_entity(partition_key=SPIKE_STATE_PARTITION, row_key=sensor_id)
+        last_timestamp = _parse_timestamp(state["last_timestamp"])
+    except ResourceNotFoundError:
+        state, last_timestamp = None, None
 
+    # Ignore duplicate or out-of-order readings for an event already in progress
+    if last_timestamp and timestamp <= last_timestamp:
+        return
 
-def _decode_history(payload):
-    fields = payload.get("fields", [])
-    readings = []
-    for row in payload.get("data", []):
-        if isinstance(row, dict):
-            values = row
-        elif isinstance(row, str):
-            values = dict(zip(fields, row.split(",")))
-        else:
-            values = dict(zip(fields, row))
-        timestamp = values.get("time_stamp") or values.get("timestamp")
-        pm2_5 = values.get("pm2.5_atm")
-        if timestamp is None or pm2_5 is None:
-            continue
+    if pm2_5 <= SPIKE_THRESHOLD:
+        if state:
+            state_table.delete_entity(partition_key=SPIKE_STATE_PARTITION, row_key=sensor_id)
+        return
+
+    event = None
+    if state and timestamp - last_timestamp <= SPIKE_MAX_GAP:
         try:
-            readings.append({"timestamp": _parse_history_timestamp(timestamp), "pm2_5": float(pm2_5)})
-        except (TypeError, ValueError, OverflowError):
-            continue
-    return readings
+            event = events_table.get_entity(partition_key=sensor_id, row_key=state["event_row_key"])
+        except ResourceNotFoundError:
+            event = None
 
+    if event:
+        event["end_time"] = timestamp.isoformat()
+        event["peak_pm2_5"] = max(float(event["peak_pm2_5"]), pm2_5)
+        event["total_pm2_5"] = float(event["total_pm2_5"]) + pm2_5
+        event["reading_count"] = int(event["reading_count"]) + 1
+    else:
+        event = {
+            "PartitionKey": sensor_id,
+            "RowKey": timestamp.strftime("%Y%m%d%H%M%S"),
+            "sensor_name": sensor_name,
+            "start_time": timestamp.isoformat(),
+            "end_time": timestamp.isoformat(),
+            "peak_pm2_5": pm2_5,
+            "total_pm2_5": pm2_5,
+            "reading_count": 1,
+        }
+    events_table.upsert_entity(entity=event)
+    state_table.upsert_entity(entity={
+        "PartitionKey": SPIKE_STATE_PARTITION,
+        "RowKey": sensor_id,
+        "event_row_key": event["RowKey"],
+        "last_timestamp": timestamp.isoformat(),
+    })
 
-def run_history_sync(api_key, connection_string, logger=logging, now=None):
-    """Backfill 7 days once, then incrementally sync each sensor's 10-minute history."""
-    service = TableServiceClient.from_connection_string(conn_str=connection_string)
-    registry = service.get_table_client(REGISTRY_TABLE)
-    history = _get_or_create_table(service, HISTORY_TABLE)
-    state = _get_or_create_table(service, HISTORY_STATE_TABLE)
-    sync_time = now or datetime.now(timezone.utc)
-    if sync_time.tzinfo is None:
-        sync_time = sync_time.replace(tzinfo=timezone.utc)
-    sync_time = sync_time.astimezone(timezone.utc)
-
-    sensors = list(registry.query_entities("IsActive eq true"))
-    if not sensors:
-        logger.warning("No active sensors found in SensorRegistry. History sync skipped.")
-        return {"requested": 0, "saved": 0, "failed": []}
-
-    saved = 0
-    failed = []
-    next_request_at = time.monotonic()
-    for sensor in sensors:
-        sensor_id = str(sensor["RowKey"])
-        try:
-            try:
-                checkpoint = state.get_entity(partition_key="PurpleAirHistory", row_key=sensor_id)
-                previous_timestamp = _parse_history_timestamp(checkpoint["last_timestamp"])
-                start_time = previous_timestamp - timedelta(minutes=HISTORY_OVERLAP_MINUTES)
-            except ResourceNotFoundError:
-                start_time = sync_time - timedelta(days=HISTORY_INITIAL_DAYS)
-
-            delay = next_request_at - time.monotonic()
-            if delay > 0:
-                time.sleep(delay)
-            response = requests.get(
-                f"{PURPLEAIR_SENSORS_URL}/{sensor_id}/history",
-                headers={"X-API-Key": api_key},
-                params={
-                    "start_timestamp": int(start_time.timestamp()),
-                    "end_timestamp": int(sync_time.timestamp()),
-                    "average": 10,
-                    "fields": ",".join(HISTORY_FIELDS),
-                },
-                timeout=30,
-            )
-            next_request_at = time.monotonic() + 1
-            response.raise_for_status()
-            payload = response.json()
-            if payload.get("error"):
-                raise RuntimeError(payload.get("description") or payload["error"])
-
-            sensor_name = sensor.get("Name") or f"Sensor {sensor_id}"
-            entities = []
-            for reading in _decode_history(payload):
-                timestamp = reading["timestamp"]
-                entities.append({
-                    "PartitionKey": sensor_id,
-                    "RowKey": timestamp.strftime("%Y%m%d%H%M%S"),
-                    "timestamp": timestamp.isoformat(),
-                    "sensor_name": sensor_name,
-                    "pm2_5": reading["pm2_5"],
-                })
-
-            for offset in range(0, len(entities), 100):
-                batch = entities[offset:offset + 100]
-                history.submit_transaction([("upsert", entity) for entity in batch])
-
-            state.upsert_entity(entity={
-                "PartitionKey": "PurpleAirHistory",
-                "RowKey": sensor_id,
-                "last_timestamp": sync_time.isoformat(),
-                "last_sync": sync_time.isoformat(),
-            })
-            saved += len(entities)
-            logger.info(f"History sync #{sensor_id} ({sensor_name}): saved {len(entities)} reading(s).")
-        except Exception as exc:
-            failed.append(sensor_id)
-            logger.exception(f"History sync failed for sensor #{sensor_id}: {exc}")
-
-    logger.info(f"History sync complete: saved {saved} reading(s); failed sensors: {len(failed)}.")
-    return {"requested": len(sensors), "saved": saved, "failed": failed}
 
 # ==============================================================================
 # METHOD 1: Scheduled Pull (PurpleAir API)
@@ -232,6 +194,7 @@ def run_ingestion(api_key, connection_string, logger=logging):
 
     # 3. Store one row per sensor
     data_client = _get_or_create_table(service, DATA_TABLE)
+    events_table, state_table = get_spike_tables(service)
     utc_now = datetime.now(timezone.utc)
     row_prefix = utc_now.strftime("%Y%m%d%H%M%S")
 
@@ -260,6 +223,10 @@ def run_ingestion(api_key, connection_string, logger=logging):
 
         data_client.upsert_entity(entity=entity)
         saved += 1
+        try:
+            record_spike_reading(events_table, state_table, sensor_id, entity["name"], utc_now, entity.get("pm2_5"))
+        except Exception:
+            logger.exception(f"Could not update spike events for #{sensor_id}")
         logger.info(f"Saved #{sensor_id} ({entity['name']}): PM2.5={entity.get('pm2_5')}")
 
     if missing:
@@ -416,6 +383,11 @@ def process_sensor_push(payload, connection_string, logger=logging):
         entity["longitude"] = float(lon)
 
     data_client.upsert_entity(entity=entity)
+    try:
+        events_table, state_table = get_spike_tables(service)
+        record_spike_reading(events_table, state_table, sensor_id, sensor_name, _parse_timestamp(ts_iso), pm2_5)
+    except Exception:
+        logger.exception(f"Could not update spike events for push sensor #{sensor_id}")
     logger.info(f"Direct push saved: #{sensor_id} ({sensor_name}) -> PM2.5={pm2_5}, Temp={temp}F")
 
     return {

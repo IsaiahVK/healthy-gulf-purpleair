@@ -4,61 +4,26 @@ from unittest.mock import MagicMock, patch
 
 from azure.core.exceptions import ResourceNotFoundError
 
-from display_webapp.app import app, detect_spike_events
-from ingestion_function.ingestion import _decode_history
+from display_webapp.app import app
 
 
 class SpikeEventTests(unittest.TestCase):
     def setUp(self):
-        self.sensor = {"id": "123", "name": "Test sensor", "location": "Test location"}
-        self.start = datetime(2026, 10, 1, tzinfo=timezone.utc)
+        self.start = datetime.now(timezone.utc).replace(microsecond=0) - timedelta(hours=3)
 
-    def test_threshold_is_strictly_above_35(self):
-        readings = [
-            {"timestamp": self.start, "pm2_5": 35.0},
-            {"timestamp": self.start + timedelta(minutes=10), "pm2_5": 35.1},
-        ]
+    def service_with(self, events_table, registry_rows):
+        registry = MagicMock()
+        registry.list_entities.return_value = registry_rows
+        service = MagicMock()
+        service.get_table_client.side_effect = lambda table: {
+            "SensorRegistry": registry,
+            "SpikeEvents": events_table,
+        }[table]
+        return service
 
-        events = detect_spike_events(self.sensor, readings)
-
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["peak_pm2_5"], 35.1)
-
-    def test_groups_adjacent_exceedances_and_reports_duration(self):
-        readings = [
-            {"timestamp": self.start + timedelta(minutes=10), "pm2_5": 38.0},
-            {"timestamp": self.start, "pm2_5": 36.0},
-            {"timestamp": self.start + timedelta(minutes=20), "pm2_5": 42.0},
-        ]
-
-        events = detect_spike_events(self.sensor, readings)
-
-        self.assertEqual(len(events), 1)
-        self.assertEqual(events[0]["duration_minutes"], 30)
-        self.assertEqual(events[0]["reading_count"], 3)
-        self.assertEqual(events[0]["peak_pm2_5"], 42.0)
-
-    def test_splits_events_after_a_gap_over_20_minutes(self):
-        readings = [
-            {"timestamp": self.start, "pm2_5": 36.0},
-            {"timestamp": self.start + timedelta(minutes=30), "pm2_5": 37.0},
-        ]
-
-        events = detect_spike_events(self.sensor, readings)
-
-        self.assertEqual(len(events), 2)
-        self.assertEqual([event["duration_minutes"] for event in events], [10, 10])
-
-    def test_decodes_purpleair_history_columns_by_name(self):
-        payload = {
-            "fields": ["sensor_index", "pm2.5_atm", "time_stamp"],
-            "data": [[123, 41.5, 1790812800]],
-        }
-
-        readings = _decode_history(payload)
-
-        self.assertEqual(readings[0]["pm2_5"], 41.5)
-        self.assertEqual(readings[0]["timestamp"].tzinfo, timezone.utc)
+    def get_events(self, service):
+        with patch.dict("os.environ", {"AZURE_STORAGE_CONNECTION_STRING": "storage", "PURPLEAIR_API_KEY": ""}),                 patch("display_webapp.app.TableServiceClient.from_connection_string", return_value=service):
+            return app.test_client().get("/api/events")
 
     def test_dashboard_renders_events_tab(self):
         dashboard_data = {
@@ -79,59 +44,50 @@ class SpikeEventTests(unittest.TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(b"Recent PM2.5 spikes", response.data)
-        self.assertIn(b"Stored PurpleAir 10-minute", response.data)
+        self.assertIn(b"updated as each new reading arrives", response.data)
         self.assertIn(b"event-sensor-filter", response.data)
         self.assertNotIn(b"refresh-events", response.data)
 
-    def test_events_endpoint_reads_storage_without_purpleair_key(self):
-        registry = MagicMock()
-        registry.list_entities.return_value = [{"RowKey": "123", "Name": "Test sensor", "Location": "Test location"}]
-        history = MagicMock()
-        history.query_entities.return_value = [
-            {"timestamp": self.start.isoformat(), "pm2_5": 36.5},
-            {"timestamp": (self.start + timedelta(minutes=10)).isoformat(), "pm2_5": 40.0},
-        ]
-        state = MagicMock()
-        state.query_entities.return_value = [{"RowKey": "123"}]
-        service = MagicMock()
-        service.get_table_client.side_effect = lambda table: {
-            "SensorRegistry": registry,
-            "PurpleAirHistory": history,
-            "PurpleAirHistorySyncState": state,
-        }[table]
+    def test_events_endpoint_reads_spike_events_table(self):
+        events_table = MagicMock()
+        events_table.query_entities.return_value = [{
+            "PartitionKey": "123",
+            "RowKey": self.start.strftime("%Y%m%d%H%M%S"),
+            "sensor_name": "Old name",
+            "start_time": self.start.isoformat(),
+            "end_time": (self.start + timedelta(minutes=10)).isoformat(),
+            "peak_pm2_5": 40.0,
+            "total_pm2_5": 114.0,
+            "reading_count": 3,
+        }]
+        service = self.service_with(events_table, [
+            {"RowKey": "123", "Name": "Test sensor", "Location": "Test location", "IsActive": True},
+        ])
 
-        with patch.dict("os.environ", {"AZURE_STORAGE_CONNECTION_STRING": "storage", "PURPLEAIR_API_KEY": ""}), \
-                patch("display_webapp.app.TableServiceClient.from_connection_string", return_value=service):
-            response = app.test_client().get("/api/events")
+        response = self.get_events(service)
 
         self.assertEqual(response.status_code, 200)
         payload = response.get_json()
         self.assertTrue(payload["history_ready"])
-        self.assertEqual(len(payload["events"]), 1)
-        self.assertEqual(payload["events"][0]["peak_pm2_5"], 40.0)
-        history.query_entities.assert_called_once()
+        self.assertEqual(payload["sensor_count"], 1)
+        [event] = payload["events"]
+        self.assertEqual(event["sensor_name"], "Test sensor")
+        self.assertEqual(event["location"], "Test location")
+        self.assertEqual(event["peak_pm2_5"], 40.0)
+        self.assertEqual(event["mean_pm2_5"], 38.0)
+        self.assertEqual(event["duration_minutes"], 15)
+        events_table.query_entities.assert_called_once()
 
-    def test_events_endpoint_explains_when_history_table_is_missing(self):
-        registry = MagicMock()
-        registry.list_entities.return_value = [{"RowKey": "123", "Name": "Test sensor"}]
-        history = MagicMock()
-        history.query_entities.side_effect = ResourceNotFoundError("table missing")
-        state = MagicMock()
-        state.query_entities.return_value = [{"RowKey": "123"}]
-        service = MagicMock()
-        service.get_table_client.side_effect = lambda table: {
-            "SensorRegistry": registry,
-            "PurpleAirHistory": history,
-            "PurpleAirHistorySyncState": state,
-        }[table]
+    def test_events_endpoint_is_empty_before_any_events_are_recorded(self):
+        events_table = MagicMock()
+        events_table.query_entities.side_effect = ResourceNotFoundError("table missing")
+        service = self.service_with(events_table, [{"RowKey": "123", "Name": "Test sensor", "IsActive": True}])
 
-        with patch.dict("os.environ", {"AZURE_STORAGE_CONNECTION_STRING": "storage"}), \
-                patch("display_webapp.app.TableServiceClient.from_connection_string", return_value=service):
-            response = app.test_client().get("/api/events")
+        response = self.get_events(service)
 
         self.assertEqual(response.status_code, 200)
-        self.assertFalse(response.get_json()["history_ready"])
-        self.assertIn("Enable the history sync", response.get_json()["message"])
+        self.assertEqual(response.get_json()["events"], [])
+        self.assertEqual(response.get_json()["failed_sensor_count"], 0)
 
 
 if __name__ == "__main__":

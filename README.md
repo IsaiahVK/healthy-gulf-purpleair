@@ -152,7 +152,7 @@ python test_push_ingest.py
 ```
 
 ### 4. Run the Dashboard Locally
-The Events tab reads history from the `PurpleAirHistory` Azure Table. The Function App populates this table on an hourly schedule; opening or refreshing the Events tab does not call PurpleAir.
+The Events tab reads the `SpikeEvents` Azure Table, which the Function App updates every time it saves a reading (scheduled pull or direct push). Opening or refreshing the Events tab does not call PurpleAir.
 
 ```powershell
 cd display_webapp
@@ -160,17 +160,20 @@ python app.py
 ```
 Open [http://localhost:8000](http://localhost:8000) in your web browser.
 
-### 5. Configure Events History in Azure
+### 5. How Spike Events Work
 
-1. Deploy the latest `main` branch so the Function App contains the scheduled history sync and the web app reads from `PurpleAirHistory`.
-2. In Azure Portal, open the **Function App** `healthygulf-ingest-func` and go to **Settings → Environment variables → App settings**.
-3. Set `PURPLEAIR_API_KEY` to a PurpleAir **READ** key and `AZURE_STORAGE_CONNECTION_STRING` to the storage account connection string used by the dashboard.
-4. Set `PURPLEAIR_API_CALLS_ENABLED` to `true` and `PURPLEAIR_HISTORY_SYNC_ENABLED` to `true`. Save the settings and allow the Function App to restart.
-5. In Azure Portal, open the **App Service** `healthygulf-dashboard-app` and confirm `AZURE_STORAGE_CONNECTION_STRING` points to the same storage account. Save if changed.
-6. The history timer runs hourly, at the top of the hour. On its first successful run, it backfills seven days; later runs fetch from each sensor's checkpoint with a 20-minute overlap. The Function creates `PurpleAirHistory` and `PurpleAirHistorySyncState` automatically. Wait for the next hourly run before expecting historical events.
-7. Open the dashboard's **Events** tab. It reads Azure Table Storage only; opening or refreshing the page does not call PurpleAir.
+An **event** is a run of readings above **35 µg/m³** for one sensor. A reading at or below 35 ends the event, and a gap of more than 20 minutes between high readings starts a new one.
 
-To pause only historical calls, set `PURPLEAIR_HISTORY_SYNC_ENABLED` to `false`; the existing five-minute current-reading ingestion continues. To pause **all** PurpleAir API calls, set `PURPLEAIR_API_CALLS_ENABLED` to `false`. To resume, set the relevant setting back to `true`. Azure restarts the Function App after saving app settings.
+- Every reading saved to `PurpleAirData` (scheduled pull or direct push) also updates the `SpikeEvents` table: it starts a new event, extends the open one, or closes it.
+- `SpikeEventState` holds one row per sensor while it has an event in progress. Both tables are created automatically.
+- The Events tab shows events that ended in the last 7 days. It reads only `SpikeEvents`, so it costs no PurpleAir API points.
+- To rebuild events from readings already in `PurpleAirData` (after first deploying this, or after changing the threshold), run:
+  ```powershell
+  python backfill_spike_events.py --dry-run   # preview
+  python backfill_spike_events.py             # write
+  ```
+
+To pause **all** PurpleAir API calls, set `PURPLEAIR_API_CALLS_ENABLED` to `false` in the Function App's environment variables. Direct pushes and event tracking for pushed readings keep working.
 
 ---
 
