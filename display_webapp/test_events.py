@@ -28,12 +28,11 @@ class SpikeEventTests(unittest.TestCase):
     def test_dashboard_renders_events_tab(self):
         dashboard_data = {
             "sensors": [],
-            "recent": [],
             "summary": {
                 "sensor_count": 0,
-                "active_count": 0,
+                "online_count": 0,
                 "mapped_count": 0,
-                "reading_count": 0,
+                "worst": None,
                 "avg_pm2_5": None,
                 "avg_aqi": {"aqi": None, "category": "No data", "color": "#9e9e9e", "text_color": "#ffffff"},
                 "last_updated": None,
@@ -43,8 +42,8 @@ class SpikeEventTests(unittest.TestCase):
             response = app.test_client().get("/")
 
         self.assertEqual(response.status_code, 200)
-        self.assertIn(b"Recent PM2.5 spikes", response.data)
-        self.assertIn(b"updated as each new reading arrives", response.data)
+        self.assertIn(b"Weekly air quality recap", response.data)
+        self.assertIn(b"day-chart", response.data)
         self.assertIn(b"event-sensor-filter", response.data)
         self.assertNotIn(b"refresh-events", response.data)
 

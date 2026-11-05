@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from flask import Flask, render_template, jsonify, request
 import json
@@ -25,6 +26,10 @@ SPIKE_THRESHOLD = 35.0
 EVENT_WINDOW_DAYS = 7
 READING_INTERVAL_MINUTES = 5
 SPIKE_EVENTS_TABLE = "SpikeEvents"
+# How far back the dashboard looks for each sensor's latest reading
+READING_WINDOWS_HOURS = (1, 6, 24, 48, 168)
+# A sensor that hasn't measured anything for this long is shown as offline
+OFFLINE_AFTER = timedelta(hours=2)
 
 # Multi-process caching across Gunicorn workers (L1 memory + L2 shared temp disk)
 DASHBOARD_CACHE_SECONDS = 180
@@ -96,6 +101,11 @@ def pm25_to_aqi(pm25):
     # Beyond the top of the scale
     _, _, _, _, category, color, text_color = AQI_BREAKPOINTS[-1]
     return {"aqi": 500, "category": category, "color": color, "text_color": text_color}
+
+
+def _parse_utc(value):
+    parsed = datetime.fromisoformat(str(value).replace("Z", "+00:00"))
+    return parsed.replace(tzinfo=timezone.utc) if parsed.tzinfo is None else parsed
 
 
 def _first_float(*values):
@@ -194,19 +204,25 @@ def load_dashboard_data(force_refresh=False):
     except ResourceNotFoundError:
         pass
 
-    # 2. Recent readings query:
-    # Instead of scanning every entity across weeks of history (tens of thousands of rows),
-    # query recent window (last 12 hours) to keep queries sub-second and minimize data transfer.
+    # 2. Recent readings, queried per sensor by key range (PartitionKey = sensor, RowKey starts
+    # with the save time). Filtering on a non-key property would scan the whole table.
     table = service.get_table_client("PurpleAirData")
-    since_12h = (datetime.now(timezone.utc) - timedelta(hours=12)).isoformat()
+
+    def _recent_readings(sensor_id):
+        # If ingestion has paused, widen the window step by step
+        for hours in READING_WINDOWS_HOURS:
+            since = (datetime.now(timezone.utc) - timedelta(hours=hours)).strftime("%Y%m%d%H%M%S")
+            rows = list(table.query_entities(
+                query_filter="PartitionKey eq @sensor_id and RowKey ge @since",
+                parameters={"sensor_id": sensor_id, "since": since},
+            ))
+            if rows:
+                return rows
+        return []
+
     try:
-        readings = list(table.query_entities(
-            query_filter="timestamp ge @since",
-            parameters={"since": since_12h}
-        ))
-        # If fewer than 10 readings in the last 12 hours (e.g. offline/testing), fall back gracefully
-        if len(readings) < 10:
-            readings = list(table.list_entities(results_per_page=100))[:100]
+        with ThreadPoolExecutor(max_workers=min(25, max(len(registry), 1))) as executor:
+            readings = [row for rows in executor.map(_recent_readings, list(registry)) for row in rows]
     except ResourceNotFoundError:
         readings = []
     readings.sort(key=lambda r: r.get("timestamp") or "", reverse=True)
@@ -216,59 +232,51 @@ def load_dashboard_data(force_refresh=False):
         latest_by_sensor.setdefault(str(reading["PartitionKey"]), reading)
 
     # 3. One entry per sensor: registry metadata + its most recent reading
+    now = datetime.now(timezone.utc)
     sensors = []
     for sensor_id in sorted(set(registry) | set(latest_by_sensor)):
         reg = registry.get(sensor_id, {})
         latest = latest_by_sensor.get(sensor_id, {})
         pm25 = _first_float(latest.get("pm2_5"))
+        # When the sensor itself last measured; an offline sensor keeps repeating an old value
+        measured_at = latest.get("last_seen") or latest.get("timestamp")
 
         sensor = {
             "id": sensor_id,
             "name": reg.get("Name") or latest.get("name") or f"Sensor {sensor_id}",
             "location": reg.get("Location") or "",
             "is_active": bool(reg.get("IsActive", False)),
+            "is_online": bool(measured_at) and now - _parse_utc(measured_at) <= OFFLINE_AFTER,
             # Registry coordinates win; fall back to coordinates stored on the latest reading
             "latitude": _first_float(reg.get("Latitude"), latest.get("latitude")),
             "longitude": _first_float(reg.get("Longitude"), latest.get("longitude")),
             "pm2_5": pm25,
             "temperature": _first_float(latest.get("temperature")),
             "humidity": _first_float(latest.get("humidity")),
-            "timestamp": latest.get("timestamp"),
+            "timestamp": measured_at,
         }
         sensor.update(pm25_to_aqi(pm25))
         sensors.append(sensor)
 
-    # 4. Recent readings table (latest 50)
-    names = {s["id"]: s["name"] for s in sensors}
-    recent = []
-    for reading in readings[:50]:
-        sensor_id = str(reading["PartitionKey"])
-        pm25 = _first_float(reading.get("pm2_5"))
-        row = {
-            "sensor_id": sensor_id,
-            "name": names.get(sensor_id) or reading.get("name") or f"Sensor {sensor_id}",
-            "pm2_5": pm25,
-            "temperature": _first_float(reading.get("temperature")),
-            "humidity": _first_float(reading.get("humidity")),
-            "timestamp": reading.get("timestamp"),
-        }
-        row.update(pm25_to_aqi(pm25))
-        recent.append(row)
+    # Table order: online sensors first, worst air at the top
+    sensors.sort(key=lambda s: (not s["is_online"], -(s["aqi"] if s["aqi"] is not None else -1), s["name"].lower()))
 
-    # 5. Summary cards
+    # 4. Summary cards. Use online sensors when there are any, so stale values don't skew "right now"
     with_data = [s for s in sensors if s["pm2_5"] is not None]
-    avg_pm25 = sum(s["pm2_5"] for s in with_data) / len(with_data) if with_data else None
+    current = [s for s in with_data if s["is_online"]] or with_data
+    avg_pm25 = sum(s["pm2_5"] for s in current) / len(current) if current else None
+    timestamps = [s["timestamp"] for s in sensors if s["timestamp"]]
     summary = {
         "sensor_count": len(sensors),
-        "active_count": sum(1 for s in sensors if s["is_active"]),
+        "online_count": sum(1 for s in sensors if s["is_online"]),
         "mapped_count": sum(1 for s in sensors if s["latitude"] is not None and s["longitude"] is not None),
-        "reading_count": len(readings),
         "avg_pm2_5": avg_pm25,
         "avg_aqi": pm25_to_aqi(avg_pm25),
-        "last_updated": readings[0].get("timestamp") if readings else None,
+        "worst": max(current, key=lambda s: s["pm2_5"]) if current else None,
+        "last_updated": max(timestamps, key=_parse_utc) if timestamps else None,
     }
 
-    result = {"sensors": sensors, "recent": recent, "summary": summary}
+    result = {"sensors": sensors, "summary": summary}
     _set_cache("dashboard", _dashboard_cache, result, DASHBOARD_CACHE_SECONDS)
     return result
 

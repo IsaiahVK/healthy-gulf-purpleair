@@ -47,15 +47,103 @@
         .aqi-badge { display: inline-block; min-width: 2.5rem; padding: .2rem .5rem; border-radius: 1rem; font-weight: 700; text-align: center; }
         .sensor-link { cursor: pointer; text-decoration: none; }
         .sensor-link:hover { text-decoration: underline; }
+        .sensor-offline td { color: #6c757d; }
+
+        /* About the Project */
+        .about-hero { background: linear-gradient(135deg, #0b3d5c 0%, #136f8c 60%, #2a9d8f 100%); color: #fff; }
+        .about-hero .recap-kicker { color: rgba(255,255,255,.75); }
+        .about-hero .lead { color: rgba(255,255,255,.92); max-width: 52rem; }
+        .about-fact { display: grid; grid-template-columns: 6.5rem 1fr; gap: .75rem; align-items: baseline; padding: .55rem 0; border-bottom: 1px solid #f1f3f5; }
+        .about-fact:last-child { border-bottom: 0; }
+        .about-fact-value { font-weight: 800; font-size: 1.15rem; color: #136f8c; }
+        .about-icon { font-size: 1.6rem; line-height: 1; margin-bottom: .5rem; }
+        .about-step { width: 2rem; height: 2rem; border-radius: 50%; background: #136f8c; color: #fff; font-weight: 700; display: flex; align-items: center; justify-content: center; margin-bottom: .6rem; }
+        .about-avatar { flex: 0 0 3rem; width: 3rem; height: 3rem; border-radius: 50%; background: #e3f2f5; color: #136f8c; font-weight: 700; display: flex; align-items: center; justify-content: center; }
+        .about-note { border-left: 4px solid #adb5bd !important; }
+        .about-avatar.advisor { background: #ede7f6; color: #5e35b1; }
+        .about-avatar.partner { background: #e6f4ea; color: #1e7e34; }
+        .about-region { border-top: 4px solid #136f8c !important; }
+        .about-timeline li { display: grid; grid-template-columns: 11rem 1fr; gap: 1rem; padding: .7rem 0 .7rem 1.6rem; border-left: 2px solid #dee2e6; margin-left: .45rem; position: relative; }
+        .about-timeline li::before { content: ""; position: absolute; left: -.5rem; top: .95rem; width: .9rem; height: .9rem; border-radius: 50%; background: #fff; border: 2px solid #adb5bd; }
+        .about-timeline li.done::before { background: #136f8c; border-color: #136f8c; }
+        .about-timeline li.current::before { background: #fff; border: 3px solid #0d6efd; box-shadow: 0 0 0 4px rgba(13,110,253,.15); }
+        .about-timeline .when { font-weight: 600; color: #495057; font-size: .9rem; }
+        @media (max-width: 575.98px) { .about-timeline li { grid-template-columns: 1fr; gap: .2rem; } }
+        /* Draft text still to be written; must be replaced before publishing */
+        .fill-in { background: #fff3cd; border: 1px dashed #e0a800; border-radius: .25rem; padding: 0 .3rem; color: #664d03; font-style: italic; }
+        .fill-in::before { content: "✎ "; }
+
+        /* Sortable column headers: click cycles ascending → descending → default order */
+        .sort-btn { background: none; border: 0; padding: 0; font: inherit; font-weight: 600; color: inherit; white-space: nowrap; cursor: pointer; }
+        .sort-btn::after { content: "↕"; margin-left: .35rem; font-size: .8em; color: #adb5bd; }
+        th[aria-sort="ascending"] .sort-btn::after { content: "▲"; color: #0d6efd; }
+        th[aria-sort="descending"] .sort-btn::after { content: "▼"; color: #0d6efd; }
+        th[aria-sort] .sort-btn { color: #0d6efd; }
+        .sort-btn:hover { text-decoration: underline; }
+        .sensor-offline .aqi-badge { opacity: .55; }
         .event-state { min-height: 1.5rem; }
         .event-table th { white-space: nowrap; }
+
+        /* Weekly recap */
+        .recap-kicker { letter-spacing: .06em; }
+        .recap-lede { border-left: 4px solid #0d6efd !important; }
+        .recap-lede .lead { font-size: 1.15rem; }
+        .aqi-badge.sm { min-width: 0; padding: .1rem .45rem; font-size: .75rem; font-weight: 600; }
+        .aqi-badge.outlined { border: 1px solid rgba(0,0,0,.15); }
+
+        .top-event { border-top: 5px solid var(--aqi-color) !important; }
+        .top-event .peak-value { font-size: 2rem; font-weight: 800; line-height: 1; }
+        .top-event .rank { font-size: .75rem; font-weight: 700; letter-spacing: .05em; }
+        .top-event .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: .5rem; border-top: 1px solid #eee; padding-top: .6rem; }
+        .top-event .metrics div { font-size: .8rem; color: #6c757d; }
+        .top-event .metrics strong { display: block; font-size: .95rem; color: #212529; }
+
+        .day-chart { display: flex; align-items: flex-end; gap: 6px; height: 200px; }
+        .day-col {
+            flex: 1 1 0; min-width: 0; height: 100%;
+            display: flex; flex-direction: column; justify-content: flex-end; align-items: center;
+            background: none; border: 0; padding: 0; border-radius: .4rem;
+            position: relative; cursor: pointer;
+        }
+        .day-col:hover, .day-col:focus-visible { background: #f1f4f8; outline: none; }
+        .day-col.selected { background: #e7f0ff; }
+        .day-col .bar-area { flex: 1; width: 100%; display: flex; align-items: flex-end; justify-content: center; }
+        .day-col .bar { width: 60%; max-width: 36px; background: #4c6ef5; border-radius: 4px 4px 0 0; min-height: 2px; }
+        .day-col.empty .bar { background: #dee2e6; }
+        .day-col.nodata { cursor: default; }
+        .day-col.nodata .bar { height: 100% !important; background: repeating-linear-gradient(135deg, #f1f3f5 0 6px, #e9ecef 6px 12px); border: 1px dashed #ced4da; }
+        .day-col.nodata .bar-label { font-weight: 500; color: #868e96; font-size: .7rem; }
+        .day-col .bar-label { font-size: .75rem; font-weight: 700; color: #212529; margin-bottom: 2px; min-height: 1.1em; }
+        .day-col .day-name { font-size: .75rem; font-weight: 600; color: #495057; margin-top: 4px; border-top: 1px solid #dee2e6; width: 100%; padding-top: 4px; }
+        .day-col .day-date { font-size: .7rem; color: #868e96; padding-bottom: 2px; }
+        .day-tooltip {
+            position: absolute; bottom: calc(100% - 1.5rem); left: 50%; transform: translateX(-50%);
+            background: #212529; color: #fff; font-size: .75rem; line-height: 1.35; text-align: left;
+            padding: .4rem .55rem; border-radius: .35rem; white-space: nowrap; pointer-events: none;
+            display: none; z-index: 5;
+        }
+        .day-col:hover .day-tooltip, .day-col:focus-visible .day-tooltip { display: block; }
+        /* Keep tooltips on the outer columns inside the card */
+        .day-col:nth-child(-n+2) .day-tooltip { left: 0; transform: none; }
+        .day-col:nth-last-child(-n+2) .day-tooltip { left: auto; right: 0; transform: none; }
+
+        .sensor-rank { display: grid; grid-template-columns: 1.4rem 1fr auto; gap: .25rem .6rem; align-items: center; padding: .45rem 0; border-bottom: 1px solid #f1f3f5; }
+        .sensor-rank:last-child { border-bottom: 0; }
+        .sensor-rank .pos { font-weight: 700; color: #adb5bd; font-size: .85rem; }
+        .sensor-rank .track { grid-column: 2 / 4; height: 6px; background: #f1f3f5; border-radius: 3px; overflow: hidden; }
+        .sensor-rank .fill { height: 100%; background: #4c6ef5; border-radius: 3px; }
+
+        .day-chip { font-size: .8rem; padding: .45rem .6rem; display: inline-flex; align-items: center; }
+        .day-chip .btn-close { width: .5em; height: .5em; }
     </style>
 </head>
 <body>
     <nav class="navbar navbar-dark bg-dark mb-4">
         <div class="container">
-            <span class="navbar-brand mb-0 h1">Healthy Gulf <small>· PurpleAir Air Quality</small></span>
-            <span class="badge bg-success">Connected to Azure</span>
+            <span class="navbar-brand mb-0 h1">Healthy Gulf <small>· Community Air Quality</small></span>
+            <span class="badge rounded-pill {% if summary.online_count %}bg-success{% else %}bg-secondary{% endif %}" id="live-badge">
+                {% if summary.online_count %}● Live{% else %}Readings paused{% endif %}
+            </span>
         </div>
     </nav>
 
@@ -67,6 +155,9 @@
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="events-tab" data-bs-toggle="tab" data-bs-target="#events-panel" type="button" role="tab" aria-controls="events-panel" aria-selected="false">Events</button>
             </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="about-tab" data-bs-toggle="tab" data-bs-target="#about-panel" type="button" role="tab" aria-controls="about-panel" aria-selected="false">About the Project</button>
+            </li>
         </ul>
         <div class="tab-content">
         <section class="tab-pane fade show active" id="dashboard-panel" role="tabpanel" aria-labelledby="dashboard-tab" tabindex="0">
@@ -74,91 +165,93 @@
         <!-- Map -->
         <div class="mb-4">
             <div id="map"></div>
-            {% if summary.mapped_count < summary.sensor_count %}
-            <div class="alert alert-warning mt-2 mb-0 py-2 small">
-                {{ summary.sensor_count - summary.mapped_count }} sensor(s) have no coordinates yet and are not shown on the map.
-                Run <code>python backfill_sensor_locations.py</code> to add them.
-            </div>
-            {% endif %}
         </div>
 
         <!-- Summary cards -->
         <div class="row g-3 mb-4">
             <div class="col-6 col-lg-3">
                 <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
-                    <div class="text-muted small">Sensors</div>
-                    <div class="stat-value">{{ summary.sensor_count }}</div>
-                    <div class="small text-muted">{{ summary.active_count }} actively ingesting</div>
+                    <div class="text-muted small">Sensors online</div>
+                    <div class="stat-value">{{ summary.online_count }}<span class="fs-6 text-muted fw-normal"> / {{ summary.sensor_count }}</span></div>
+                    <div class="small text-muted">reported in the last 2 hours</div>
                 </div></div>
             </div>
             <div class="col-6 col-lg-3">
                 <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
-                    <div class="text-muted small">Average AQI (latest)</div>
+                    <div class="text-muted small">Average air quality</div>
                     <div class="stat-value">
                         {% if summary.avg_aqi.aqi is not none %}
                         <span class="aqi-badge" style="background: {{ summary.avg_aqi.color }}; color: {{ summary.avg_aqi.text_color }};">{{ summary.avg_aqi.aqi }}</span>
                         {% else %}—{% endif %}
                     </div>
-                    <div class="small text-muted">{{ summary.avg_aqi.category }}</div>
+                    <div class="small text-muted">{{ summary.avg_aqi.category }}{% if summary.avg_pm2_5 is not none %} · {{ "%.1f"|format(summary.avg_pm2_5) }} µg/m³{% endif %}</div>
                 </div></div>
             </div>
             <div class="col-6 col-lg-3">
                 <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
-                    <div class="text-muted small">Average PM2.5 (latest)</div>
-                    <div class="stat-value">{% if summary.avg_pm2_5 is not none %}{{ "%.1f"|format(summary.avg_pm2_5) }}{% else %}—{% endif %}</div>
-                    <div class="small text-muted">µg/m³</div>
+                    <div class="text-muted small">Worst air {% if summary.online_count %}right now{% else %}at last reading{% endif %}</div>
+                    {% if summary.worst %}
+                    <div class="stat-value">
+                        <span class="aqi-badge" style="background: {{ summary.worst.color }}; color: {{ summary.worst.text_color }};">{{ summary.worst.aqi }}</span>
+                    </div>
+                    <div class="small text-muted text-truncate"><a class="sensor-link" data-sensor-id="{{ summary.worst.id }}">{{ summary.worst.name }}</a> · {{ summary.worst.category }}</div>
+                    {% else %}
+                    <div class="stat-value">—</div>
+                    {% endif %}
                 </div></div>
             </div>
             <div class="col-6 col-lg-3">
                 <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
-                    <div class="text-muted small">Last reading</div>
+                    <div class="text-muted small">Last updated</div>
                     <div class="stat-value fs-5 mt-2 js-relative" data-ts="{{ summary.last_updated or '' }}">—</div>
-                    <div class="small text-muted">{{ summary.reading_count }} readings stored</div>
+                    <div class="small text-muted js-time" data-ts="{{ summary.last_updated or '' }}"></div>
                 </div></div>
             </div>
         </div>
 
-        <!-- Recent readings -->
+        <!-- Current conditions, one row per sensor -->
         <div class="card border-0 shadow-sm">
             <div class="card-header bg-white border-0 pt-3">
-                <h5 class="mb-0">Recent Readings</h5>
-                <small class="text-muted">Latest 50 readings ingested by the Azure Function. Click a sensor name to find it on the map.</small>
+                <h5 class="mb-0">Current conditions</h5>
+                <small class="text-muted">The latest reading from each sensor, worst air first. Select a column heading to sort, or a sensor to find it on the map.</small>
             </div>
             <div class="card-body p-0">
                 <div class="table-responsive">
-                <table class="table table-hover mb-0 align-middle">
+                <table class="table table-hover mb-0 align-middle" id="conditions-table">
                     <thead class="table-light">
                         <tr>
-                            <th class="ps-3">Time</th>
-                            <th>Sensor</th>
-                            <th>AQI</th>
-                            <th>PM2.5</th>
-                            <th>Temperature</th>
-                            <th class="pe-3">Humidity</th>
+                            <th class="ps-3" data-sort-type="text"><button type="button" class="sort-btn">Sensor</button></th>
+                            <th data-sort-type="number"><button type="button" class="sort-btn">Air quality</button></th>
+                            <th data-sort-type="number"><button type="button" class="sort-btn">PM2.5</button></th>
+                            <th data-sort-type="number"><button type="button" class="sort-btn">Temperature</button></th>
+                            <th data-sort-type="number"><button type="button" class="sort-btn">Humidity</button></th>
+                            <th class="pe-3" data-sort-type="date"><button type="button" class="sort-btn">Last reading</button></th>
                         </tr>
                     </thead>
                     <tbody>
-                        {% for row in recent %}
-                        <tr>
-                            <td class="ps-3 text-nowrap js-time" data-ts="{{ row.timestamp or '' }}">{{ row.timestamp or '—' }}</td>
-                            <td>
-                                <a class="sensor-link fw-semibold" data-sensor-id="{{ row.sensor_id }}">{{ row.name }}</a>
-                                <div class="small text-muted">#{{ row.sensor_id }}</div>
+                        {% for s in sensors %}
+                        <tr class="{% if not s.is_online %}sensor-offline{% endif %}">
+                            <td class="ps-3" data-sort-value="{{ s.name }}">
+                                <a class="sensor-link fw-semibold" data-sensor-id="{{ s.id }}">{{ s.name }}</a>
+                                {% if s.location %}<div class="small text-muted">{{ s.location }}</div>{% endif %}
                             </td>
-                            <td>
-                                {% if row.aqi is not none %}
-                                <span class="aqi-badge" style="background: {{ row.color }}; color: {{ row.text_color }};">{{ row.aqi }}</span>
+                            <td class="text-nowrap" data-sort-value="{{ s.aqi if s.aqi is not none else '' }}">
+                                {% if s.aqi is not none %}
+                                <span class="aqi-badge" style="background: {{ s.color }}; color: {{ s.text_color }};">{{ s.aqi }}</span>
+                                <span class="small ms-1">{{ s.category }}</span>
                                 {% else %}—{% endif %}
                             </td>
-                            <td>{% if row.pm2_5 is not none %}{{ "%.1f"|format(row.pm2_5) }} µg/m³{% else %}—{% endif %}</td>
-                            <td>{% if row.temperature is not none %}{{ "%.0f"|format(row.temperature) }} °F{% else %}—{% endif %}</td>
-                            <td class="pe-3">{% if row.humidity is not none %}{{ "%.0f"|format(row.humidity) }}%{% else %}—{% endif %}</td>
+                            <td class="text-nowrap" data-sort-value="{{ s.pm2_5 if s.pm2_5 is not none else '' }}">{% if s.pm2_5 is not none %}{{ "%.1f"|format(s.pm2_5) }} µg/m³{% else %}—{% endif %}</td>
+                            <td class="text-nowrap" data-sort-value="{{ s.temperature if s.temperature is not none else '' }}">{% if s.temperature is not none %}{{ "%.0f"|format(s.temperature) }} °F{% else %}—{% endif %}</td>
+                            <td data-sort-value="{{ s.humidity if s.humidity is not none else '' }}">{% if s.humidity is not none %}{{ "%.0f"|format(s.humidity) }}%{% else %}—{% endif %}</td>
+                            <td class="pe-3 text-nowrap" data-sort-value="{{ s.timestamp or '' }}">
+                                <span class="js-relative" data-ts="{{ s.timestamp or '' }}">—</span>
+                                {% if not s.is_online %}<span class="badge text-bg-secondary ms-1">Offline</span>{% endif %}
+                            </td>
                         </tr>
                         {% else %}
                         <tr>
-                            <td colspan="6" class="p-5 text-center text-muted">
-                                <i>No data available yet. Waiting for data ingestion...</i>
-                            </td>
+                            <td colspan="6" class="p-5 text-center text-muted">No sensor readings yet.</td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -168,43 +261,346 @@
         </div>
 
         <p class="text-muted small mt-3 mb-0">
-            AQI is calculated from raw PurpleAir PM2.5 using the US EPA breakpoints, with no EPA correction factor applied.
-            Treat it as an estimate rather than an official AQI.
+            Air quality is shown as the US EPA Air Quality Index (AQI), estimated from each sensor's PM2.5 reading.
+            Low-cost sensors aren't calibrated like official monitors, so treat these values as estimates.
         </p>
         </section>
 
         <section class="tab-pane fade" id="events-panel" role="tabpanel" aria-labelledby="events-tab" tabindex="0">
-            <div class="d-flex flex-wrap justify-content-between align-items-end gap-3 mb-3">
-                <div>
-                    <h2 class="h4 mb-1">Recent PM2.5 spikes</h2>
-                    <p class="text-muted small mb-0">Periods when a sensor's stored PM2.5 readings stayed above 35 µg/m³ over the last 7 days, updated as each new reading arrives. Duration is estimated from the sampled readings.</p>
+            <div class="mb-3">
+                <div class="text-uppercase small fw-semibold text-muted recap-kicker" id="recap-range">This week</div>
+                <h2 class="h3 mb-0">Weekly air quality recap</h2>
+            </div>
+
+            <div id="recap-loading" class="card border-0 shadow-sm mb-4"><div class="card-body text-muted">Loading this week's spike events…</div></div>
+            <div id="events-errors" class="alert alert-warning py-2 small d-none" role="status"></div>
+
+            <div id="recap" class="d-none">
+                <!-- Plain-language summary -->
+                <div class="card border-0 shadow-sm mb-4 recap-lede">
+                    <div class="card-body">
+                        <p class="lead mb-2" id="recap-summary"></p>
+                        <p class="small text-muted mb-0">
+                            A <strong>spike</strong> is a stretch of readings above <strong>35 µg/m³</strong> of PM2.5, the EPA's 24-hour health standard for fine particles.
+                            Short spikes can come from smoke, traffic, or nearby burning; they don't by themselves mean the daily standard was exceeded.
+                        </p>
+                    </div>
                 </div>
-                <div>
-                    <label class="form-label small mb-1" for="event-sensor-filter">Sensor</label>
-                    <select class="form-select form-select-sm" id="event-sensor-filter" aria-label="Filter events by sensor">
-                        <option value="all">All sensors</option>
-                    </select>
+
+                <!-- Headline numbers -->
+                <div class="row g-3 mb-4">
+                    <div class="col-6 col-lg-3">
+                        <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                            <div class="text-muted small">Spikes recorded</div>
+                            <div class="stat-value" id="stat-events">—</div>
+                            <div class="small text-muted" id="stat-events-sub"></div>
+                        </div></div>
+                    </div>
+                    <div class="col-6 col-lg-3">
+                        <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                            <div class="text-muted small">Sensors affected</div>
+                            <div class="stat-value" id="stat-sensors">—</div>
+                            <div class="small text-muted">had at least one spike</div>
+                        </div></div>
+                    </div>
+                    <div class="col-6 col-lg-3">
+                        <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                            <div class="text-muted small">Time above 35 µg/m³</div>
+                            <div class="stat-value" id="stat-time">—</div>
+                            <div class="small text-muted">combined across sensors</div>
+                        </div></div>
+                    </div>
+                    <div class="col-6 col-lg-3">
+                        <div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                            <div class="text-muted small">Worst reading</div>
+                            <div class="stat-value" id="stat-worst">—</div>
+                            <div class="small text-muted text-truncate" id="stat-worst-sub"></div>
+                        </div></div>
+                    </div>
+                </div>
+
+                <!-- Top events -->
+                <h3 class="h5 mb-1">Top events this week</h3>
+                <p class="small text-muted mb-3">The highest peak at each of the hardest-hit sensors, plus the longest-lasting episode.</p>
+                <div class="row g-3 mb-4" id="top-events"></div>
+
+                <div class="row g-3 mb-4">
+                    <!-- Spikes by day -->
+                    <div class="col-lg-7">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-body">
+                                <h3 class="h6 mb-1">Spikes by day</h3>
+                                <p class="small text-muted mb-3">Number of spikes that started each day. Select a day to see its events below.</p>
+                                <div class="day-chart" id="day-chart" role="group" aria-label="Spikes by day"></div>
+                            </div>
+                        </div>
+                    </div>
+                    <!-- Most affected sensors -->
+                    <div class="col-lg-5">
+                        <div class="card border-0 shadow-sm h-100">
+                            <div class="card-body">
+                                <h3 class="h6 mb-1">Most affected sensors</h3>
+                                <p class="small text-muted mb-3">Ranked by total time above 35 µg/m³.</p>
+                                <ol class="list-unstyled mb-0" id="sensor-ranking"></ol>
+                            </div>
+                        </div>
+                    </div>
                 </div>
             </div>
-            <div id="events-state" class="event-state small text-muted mb-2" aria-live="polite">Open Events to load recorded spike events.</div>
-            <div id="events-errors" class="alert alert-warning py-2 small d-none" role="status"></div>
-            <div class="card border-0 shadow-sm">
+
+            <!-- Details -->
+            <div class="card border-0 shadow-sm" id="events-details">
+                <div class="card-header bg-white border-0 pt-3">
+                    <div class="d-flex flex-wrap justify-content-between align-items-end gap-3">
+                        <div>
+                            <h3 class="h5 mb-0">All events</h3>
+                            <div id="events-state" class="event-state small text-muted" aria-live="polite">Open Events to load recorded spike events.</div>
+                        </div>
+                        <div class="d-flex flex-wrap align-items-end gap-2">
+                            <span id="day-filter-chip" class="badge rounded-pill text-bg-primary day-chip d-none">
+                                <span id="day-filter-label"></span>
+                                <button type="button" class="btn-close btn-close-white ms-1" id="day-filter-clear" aria-label="Show all days"></button>
+                            </span>
+                            <div>
+                                <label class="form-label small mb-1" for="event-sensor-filter">Sensor</label>
+                                <select class="form-select form-select-sm" id="event-sensor-filter" aria-label="Filter events by sensor">
+                                    <option value="all">All sensors</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                </div>
                 <div class="table-responsive">
-                    <table class="table table-hover mb-0 align-middle event-table">
+                    <table class="table table-hover mb-0 align-middle event-table" id="events-table">
                         <thead class="table-light">
                             <tr>
-                                <th class="ps-3">Start / end</th>
-                                <th>Sensor</th>
-                                <th>Duration</th>
-                                <th>Peak PM2.5</th>
-                                <th>Mean PM2.5</th>
-                                <th class="pe-3">Readings</th>
+                                <th class="ps-3" data-sort-type="date"><button type="button" class="sort-btn">Start / end</button></th>
+                                <th data-sort-type="text"><button type="button" class="sort-btn">Sensor</button></th>
+                                <th data-sort-type="number"><button type="button" class="sort-btn">Duration</button></th>
+                                <th data-sort-type="number"><button type="button" class="sort-btn">Peak PM2.5</button></th>
+                                <th data-sort-type="number"><button type="button" class="sort-btn">Mean PM2.5</button></th>
+                                <th class="pe-3" data-sort-type="number"><button type="button" class="sort-btn">Readings</button></th>
                             </tr>
                         </thead>
                         <tbody id="events-body">
                             <tr><td colspan="6" class="p-4 text-center text-muted">Spike events have not been loaded.</td></tr>
                         </tbody>
                     </table>
+                </div>
+            </div>
+        </section>
+
+        <section class="tab-pane fade" id="about-panel" role="tabpanel" aria-labelledby="about-tab" tabindex="0">
+            <!-- Intro -->
+            <div class="card border-0 shadow-sm mb-4 about-hero">
+                <div class="card-body p-4 p-lg-5">
+                    <div class="text-uppercase small fw-semibold recap-kicker mb-2">About FlareWatch</div>
+                    <h2 class="display-6 fw-semibold mb-3">Making air quality data easy to understand for Gulf Coast communities</h2>
+                    <p class="lead mb-0">
+                        FlareWatch turns readings from community air sensors into a dashboard anyone can use.
+                        It shows current conditions and past measurements, and it finds and documents spikes in particle pollution
+                        in industrial communities along the Gulf Coast.
+                    </p>
+                </div>
+            </div>
+
+            <div class="row g-4 mb-4">
+                <!-- Why -->
+                <div class="col-lg-7">
+                    <h3 class="h5">Why we're doing this</h3>
+                    <p>
+                        People who live next to refineries, chemical plants, and other industrial sites breathe some of the dirtiest air
+                        in the country, but they have few ways to check it. Official monitors are expensive and far apart,
+                        and the air next to a plant can be very different from the air a few miles away.
+                    </p>
+                    <p>
+                        Low-cost PurpleAir sensors help fill that gap, but their raw data is hard to read and harder to act on.
+                        Without clear, documented evidence of <em>when</em> and <em>where</em> pollution spikes, it's hard for residents
+                        to push for accountability.
+                    </p>
+                    <p class="mb-0">
+                        FlareWatch processes that data into a form that's easy to understand, including for older residents and people without a technical background.
+                        It's built for residents, Healthy Gulf, and community organizations.
+                    </p>
+                </div>
+
+                <!-- What it does -->
+                <div class="col-lg-5">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-body">
+                            <h3 class="h6 text-uppercase text-muted recap-kicker mb-3">What FlareWatch does</h3>
+                            <div class="about-fact"><span class="about-fact-value">Now</span><span>Current air quality at each sensor, on a map and color-coded by the EPA's Air Quality Index</span></div>
+                            <div class="about-fact"><span class="about-fact-value">Spikes</span><span>Automatically finds and documents every period above 35 µg/m³, the EPA's 24-hour PM2.5 standard</span></div>
+                            <div class="about-fact"><span class="about-fact-value">History</span><span>A weekly recap of the worst events, plus the full record of past spikes</span></div>
+                            <div class="about-fact"><span class="about-fact-value">5 min</span><span>Between data updates, around the clock</span></div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Regions -->
+            <h3 class="h5 mb-1">Where we're monitoring</h3>
+            <p class="small text-muted mb-3">
+                Healthy Gulf is installing new sensors in four industrial communities. Until they're online, the map shows sensors Healthy Gulf already operates around the region.
+            </p>
+            <div class="row g-3 mb-4">
+                <div class="col-sm-6 col-lg-3"><div class="card border-0 shadow-sm h-100 about-region"><div class="card-body">
+                    <div class="small text-muted">Louisiana</div>
+                    <h4 class="h6 mb-1">Westlake</h4>
+                    <p class="small mb-0">Next to Lake Charles, in southwest Louisiana's petrochemical corridor.</p>
+                </div></div></div>
+                <div class="col-sm-6 col-lg-3"><div class="card border-0 shadow-sm h-100 about-region"><div class="card-body">
+                    <div class="small text-muted">Louisiana</div>
+                    <h4 class="h6 mb-1">Cancer Alley</h4>
+                    <p class="small mb-0">The stretch of the Mississippi River between Baton Rouge and New Orleans lined with petrochemical plants.</p>
+                </div></div></div>
+                <div class="col-sm-6 col-lg-3"><div class="card border-0 shadow-sm h-100 about-region"><div class="card-body">
+                    <div class="small text-muted">Louisiana</div>
+                    <h4 class="h6 mb-1">Plaquemines Parish</h4>
+                    <p class="small mb-0">Downriver from New Orleans, along the lower Mississippi toward the Gulf.</p>
+                </div></div></div>
+                <div class="col-sm-6 col-lg-3"><div class="card border-0 shadow-sm h-100 about-region"><div class="card-body">
+                    <div class="small text-muted">Florida</div>
+                    <h4 class="h6 mb-1">Pensacola</h4>
+                    <p class="small mb-0">On Pensacola Bay in the Florida Panhandle.</p>
+                </div></div></div>
+            </div>
+
+            <!-- Partners -->
+            <h3 class="h5 mb-3">Who we're working with</h3>
+            <div class="row g-3 mb-4">
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm h-100"><div class="card-body">
+                        <div class="about-icon" aria-hidden="true">🌊</div>
+                        <h4 class="h6">Healthy Gulf</h4>
+                        <p class="small mb-2">
+                            A nonprofit working to protect and restore the natural resources of the Gulf region and the communities that depend on them.
+                            Healthy Gulf is our community partner and installs and maintains the sensors.
+                        </p>
+                        <a class="small" href="https://healthygulf.org" target="_blank" rel="noopener">healthygulf.org ↗</a>
+                    </div></div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm h-100"><div class="card-body">
+                        <div class="about-icon" aria-hidden="true">🏘️</div>
+                        <h4 class="h6">Community sensor hosts</h4>
+                        <p class="small mb-0">
+                            The people and organizations who host a sensor at their home or building.
+                            Every pin on the map is someone who volunteered to help their neighborhood see its air.
+                        </p>
+                    </div></div>
+                </div>
+                <div class="col-md-4">
+                    <div class="card border-0 shadow-sm h-100"><div class="card-body">
+                        <div class="about-icon" aria-hidden="true">📡</div>
+                        <h4 class="h6">PurpleAir</h4>
+                        <p class="small mb-2">
+                            The maker of the sensors. Each one uses two laser particle counters to measure PM2.5, along with temperature and humidity,
+                            and reports over Wi-Fi.
+                        </p>
+                        <a class="small" href="https://www2.purpleair.com" target="_blank" rel="noopener">purpleair.com ↗</a>
+                    </div></div>
+                </div>
+            </div>
+
+            <!-- How it works -->
+            <h3 class="h5 mb-3">How it works</h3>
+            <div class="row g-3 mb-4 about-steps">
+                <div class="col-sm-6 col-lg-3"><div class="card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="about-step">1</div>
+                    <h4 class="h6">Sensors measure</h4>
+                    <p class="small mb-0">Each sensor counts fine particles in the air around it and reports a new reading every couple of minutes.</p>
+                </div></div></div>
+                <div class="col-sm-6 col-lg-3"><div class="card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="about-step">2</div>
+                    <h4 class="h6">We collect the data</h4>
+                    <p class="small mb-0">Every 5 minutes, our cloud service on Microsoft Azure gathers the latest reading from every sensor and stores it.</p>
+                </div></div></div>
+                <div class="col-sm-6 col-lg-3"><div class="card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="about-step">3</div>
+                    <h4 class="h6">Spikes are flagged</h4>
+                    <p class="small mb-0">As each reading arrives, readings above 35 µg/m³ are grouped into spike events, so nothing is missed between visits.</p>
+                </div></div></div>
+                <div class="col-sm-6 col-lg-3"><div class="card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="about-step">4</div>
+                    <h4 class="h6">Anyone can see it</h4>
+                    <p class="small mb-0">The map shows current conditions and the Events tab recaps the past week, translated into the EPA's color-coded Air Quality Index.</p>
+                </div></div></div>
+            </div>
+
+            <!-- Roadmap -->
+            <h3 class="h5 mb-3">Project roadmap</h3>
+            <div class="card border-0 shadow-sm mb-4">
+                <div class="card-body">
+                    <ol class="about-timeline list-unstyled mb-0">
+                        <li class="done">
+                            <div class="when">October</div>
+                            <div><strong>Proof of concept</strong><div class="small text-muted">Get data from PurpleAir into Azure and display it.</div></div>
+                        </li>
+                        <li class="current">
+                            <div class="when">November – December</div>
+                            <div><strong>Working dashboard</strong> <span class="badge text-bg-primary ms-1">We are here</span><div class="small text-muted">A web dashboard with current conditions, spike detection, and a weekly recap.</div></div>
+                        </li>
+                        <li>
+                            <div class="when">January – February</div>
+                            <div><strong>Community feedback</strong><div class="small text-muted">Several rounds of listening, revising, and testing with Healthy Gulf and sensor hosts.</div></div>
+                        </li>
+                        <li>
+                            <div class="when">March – April</div>
+                            <div><strong>Public launch</strong><div class="small text-muted">A fully accessible dashboard, ready for every community we serve.</div></div>
+                        </li>
+                    </ol>
+                </div>
+            </div>
+
+            <!-- Team -->
+            <h3 class="h5 mb-1">The team</h3>
+            <p class="small text-muted mb-3">FlareWatch is a student capstone project at Tulane University.</p>
+            <div class="row g-3 mb-4">
+                <div class="col-sm-6 col-lg-4">
+                    <div class="card border-0 shadow-sm h-100"><div class="card-body d-flex gap-3 align-items-center">
+                        <div class="about-avatar" aria-hidden="true">IK</div>
+                        <div><div class="fw-semibold">Isaiah Kushner</div><div class="small text-muted">Student developer</div></div>
+                    </div></div>
+                </div>
+                <div class="col-sm-6 col-lg-4">
+                    <div class="card border-0 shadow-sm h-100"><div class="card-body d-flex gap-3 align-items-center">
+                        <div class="about-avatar" aria-hidden="true">CW</div>
+                        <div><div class="fw-semibold">Cole Welch</div><div class="small text-muted">Student developer</div></div>
+                    </div></div>
+                </div>
+                <div class="col-sm-6 col-lg-4">
+                    <div class="card border-0 shadow-sm h-100"><div class="card-body d-flex gap-3 align-items-center">
+                        <div class="about-avatar partner" aria-hidden="true">SE</div>
+                        <div><div class="fw-semibold">Scott Eustis</div><div class="small text-muted">Healthy Gulf, community partner</div></div>
+                    </div></div>
+                </div>
+                <div class="col-sm-6 col-lg-4">
+                    <div class="card border-0 shadow-sm h-100"><div class="card-body d-flex gap-3 align-items-center">
+                        <div class="about-avatar advisor" aria-hidden="true">NM</div>
+                        <div><div class="fw-semibold">Prof. Nick Mattei</div><div class="small text-muted">Faculty advisor</div></div>
+                    </div></div>
+                </div>
+                <div class="col-sm-6 col-lg-4">
+                    <div class="card border-0 shadow-sm h-100"><div class="card-body d-flex gap-3 align-items-center">
+                        <div class="about-avatar advisor" aria-hidden="true">MT</div>
+                        <div><div class="fw-semibold">Prof. Matthew Toups</div><div class="small text-muted">Faculty advisor</div></div>
+                    </div></div>
+                </div>
+            </div>
+
+            <!-- Data notes -->
+            <div class="card border-0 shadow-sm about-note">
+                <div class="card-body">
+                    <h3 class="h6 mb-2">A note on the data</h3>
+                    <p class="small mb-2">
+                        PurpleAir sensors are low-cost and aren't calibrated the way official regulatory monitors are, so treat their readings as estimates.
+                        They're very good at showing <em>when</em> and <em>where</em> air quality changes, but they can read high in humid weather.
+                        Temperature is measured inside the sensor's housing and usually reads several degrees warmer than the outdoor air.
+                    </p>
+                    <p class="small mb-0">
+                        For official air quality forecasts and alerts, visit <a href="https://www.airnow.gov" target="_blank" rel="noopener">AirNow.gov ↗</a>.
+                    </p>
                 </div>
             </div>
         </section>
@@ -255,9 +651,9 @@
         map.on("click", () => map.scrollWheelZoom.enable()); // enable scroll zoom only after the user interacts
 
         function popupHtml(s) {
-            const status = s.is_active
-                ? '<span class="badge bg-success">Active</span>'
-                : '<span class="badge bg-secondary">Paused</span>';
+            const status = s.is_online
+                ? '<span class="badge bg-success">Online</span>'
+                : '<span class="badge bg-secondary">Offline</span>';
             return `
                 <div class="popup-header" style="background:${s.color}; color:${s.text_color};">
                     <div class="d-flex justify-content-between align-items-start">
@@ -279,7 +675,7 @@
                     <div class="metric"><span class="text-muted">Last reading</span><strong title="${escapeHtml(formatLocal(s.timestamp))}">${timeAgo(s.timestamp)}</strong></div>
                     <div class="mt-2 d-flex justify-content-between align-items-center">
                         ${status}
-                        <a class="small" href="https://map.purpleair.com/?select=${encodeURIComponent(s.id)}" target="_blank" rel="noopener">View on PurpleAir ↗</a>
+                        <a class="small" href="https://map.purpleair.com/?select=${encodeURIComponent(s.id)}" target="_blank" rel="noopener">More on PurpleAir ↗</a>
                     </div>
                 </div>`;
         }
@@ -290,7 +686,7 @@
             if (s.latitude === null || s.longitude === null) return;
             const icon = L.divIcon({
                 className: "",
-                html: `<div class="aqi-pin ${s.is_active ? "" : "inactive"}" style="background:${s.color}; color:${s.text_color};">${s.aqi ?? "–"}</div>`,
+                html: `<div class="aqi-pin ${s.is_online ? "" : "inactive"}" style="background:${s.color}; color:${s.text_color};">${s.aqi ?? "–"}</div>`,
                 iconSize: [40, 40],
                 iconAnchor: [20, 20],
                 popupAnchor: [0, -20]
@@ -330,6 +726,59 @@
             });
         });
 
+        // Sortable tables: each header with data-sort-type cycles ascending → descending → original order.
+        // Cells provide data-sort-value; empty values always sort last. Call refresh() after
+        // replacing the table body so the current sort is kept.
+        function makeSortable(table) {
+            const tbody = table.tBodies[0];
+            const headers = [...table.tHead.rows[0].cells];
+            let originalRows = [...tbody.rows];
+            let sortedColumn = null;
+            let direction = null;
+
+            const parse = (raw, type) => {
+                if (raw === undefined || raw === "") return null;
+                if (type === "number") return Number(raw);
+                if (type === "date") return Date.parse(raw);
+                return raw.toLowerCase();
+            };
+
+            function apply() {
+                headers.forEach(h => h.removeAttribute("aria-sort"));
+                if (!direction) {
+                    tbody.append(...originalRows);
+                    return;
+                }
+                const th = headers[sortedColumn];
+                const type = th.dataset.sortType;
+                th.setAttribute("aria-sort", direction);
+                const value = row => parse(row.cells[sortedColumn]?.dataset.sortValue, type);
+                tbody.append(...[...originalRows].sort((a, b) => {
+                    const x = value(a), y = value(b);
+                    if (x === null || y === null) return (x === null) - (y === null);
+                    const order = type === "text" ? x.localeCompare(y) : x - y;
+                    return direction === "ascending" ? order : -order;
+                }));
+            }
+
+            headers.forEach((th, column) => {
+                if (!th.dataset.sortType) return;
+                th.querySelector(".sort-btn").addEventListener("click", () => {
+                    direction = sortedColumn !== column ? "ascending" : direction === "ascending" ? "descending" : null;
+                    sortedColumn = direction ? column : null;
+                    apply();
+                });
+            });
+
+            return {
+                refresh() {
+                    originalRows = [...tbody.rows];
+                    apply();
+                },
+            };
+        }
+        makeSortable(document.getElementById("conditions-table"));
+
         // Convert UTC timestamps to the viewer's local time
         document.querySelectorAll(".js-time").forEach(el => { el.textContent = formatLocal(el.dataset.ts); });
         document.querySelectorAll(".js-relative").forEach(el => {
@@ -337,12 +786,18 @@
             el.title = formatLocal(el.dataset.ts);
         });
 
+        // ---------- weekly recap (Events tab) ----------
         const eventsBody = document.getElementById("events-body");
         const eventsState = document.getElementById("events-state");
         const eventsErrors = document.getElementById("events-errors");
         const eventSensorFilter = document.getElementById("event-sensor-filter");
+        const recapEl = document.getElementById("recap");
+        const recapLoading = document.getElementById("recap-loading");
+        const dayChip = document.getElementById("day-filter-chip");
         let eventsLoaded = false;
         let loadedEvents = null;
+        let selectedDay = null;
+        const eventsSort = makeSortable(document.getElementById("events-table"));
 
         const sensorOptions = new Map(SENSORS.map(sensor => [String(sensor.id), sensor.name]));
         sensorOptions.forEach((name, id) => {
@@ -352,6 +807,23 @@
             eventSensorFilter.append(option);
         });
 
+        // Same EPA breakpoints as pm25_to_aqi() in app.py
+        function pmToAqi(pm) {
+            const value = Math.max(0, Math.floor(Number(pm) * 10) / 10);
+            for (const [pmLo, pmHi, aqiLo, aqiHi, category, color, textColor] of AQI_SCALE) {
+                if (value <= pmHi) {
+                    return { aqi: Math.round((aqiHi - aqiLo) / (pmHi - pmLo) * (value - pmLo) + aqiLo), category, color, textColor };
+                }
+            }
+            const top = AQI_SCALE[AQI_SCALE.length - 1];
+            return { aqi: 500, category: top[4], color: top[5], textColor: top[6] };
+        }
+
+        function aqiBadge(pm, extraClass = "") {
+            const a = pmToAqi(pm);
+            return `<span class="aqi-badge ${extraClass}" style="background:${a.color}; color:${a.textColor};">AQI ${a.aqi} · ${escapeHtml(a.category)}</span>`;
+        }
+
         function formatDuration(minutes) {
             if (minutes < 60) return `${minutes} min`;
             const hours = Math.floor(minutes / 60);
@@ -359,31 +831,206 @@
             return remainingMinutes ? `${hours} hr ${remainingMinutes} min` : `${hours} hr`;
         }
 
-        function renderEvents(data) {
-            loadedEvents = data;
-            if (!data.history_ready) {
-                eventsBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-muted">${escapeHtml(data.message || "History sync has not completed yet.")}</td></tr>`;
-                eventsState.textContent = "Waiting for the scheduled history sync.";
+        // Events are bucketed by the viewer's local calendar day
+        const dayKey = ts => new Date(ts).toLocaleDateString("en-CA");
+        const dayLabel = (key, opts) => new Date(`${key}T12:00:00`).toLocaleDateString([], opts);
+        const whenLabel = ts => new Date(ts).toLocaleString([], { weekday: "short", month: "short", day: "numeric", hour: "numeric", minute: "2-digit" });
+
+        function summarizeWeek(data) {
+            const events = data.events;
+            const bySensor = new Map();
+            events.forEach(event => {
+                const id = String(event.sensor_id);
+                const entry = bySensor.get(id) || { id, name: event.sensor_name, count: 0, minutes: 0, worst: null };
+                entry.count += 1;
+                entry.minutes += event.duration_minutes;
+                if (!entry.worst || event.peak_pm2_5 > entry.worst.peak_pm2_5) entry.worst = event;
+                bySensor.set(id, entry);
+            });
+
+            // One bucket per local day from the start of the window through today
+            const days = [];
+            const cursor = new Date(data.window_start);
+            cursor.setHours(12, 0, 0, 0);
+            const lastKey = dayKey(data.window_end);
+            while (days.length < 9) {
+                const key = cursor.toLocaleDateString("en-CA");
+                days.push({ key, count: 0, worst: null });
+                if (key === lastKey) break;
+                cursor.setDate(cursor.getDate() + 1);
+            }
+            // Days after the newest stored reading had no data collected, which is not the same as clean air
+            const lastReading = SENSORS.map(sensor => sensor.timestamp).filter(Boolean).sort().pop();
+            const lastReadingKey = lastReading ? dayKey(lastReading) : null;
+            days.forEach(day => { day.noData = !lastReadingKey || day.key > lastReadingKey; });
+            const dayIndex = new Map(days.map(day => [day.key, day]));
+            events.forEach(event => {
+                const day = dayIndex.get(dayKey(event.start));
+                if (!day) return;
+                day.count += 1;
+                if (!day.worst || event.peak_pm2_5 > day.worst.peak_pm2_5) day.worst = event;
+            });
+
+            const sensors = [...bySensor.values()];
+            const pick = (better) => events.reduce((best, event) => (!best || better(event, best) ? event : best), null);
+            return {
+                events, days, lastReading,
+                worst: pick((a, b) => a.peak_pm2_5 > b.peak_pm2_5),
+                longest: pick((a, b) => a.duration_minutes > b.duration_minutes),
+                // Highest peak per sensor, so one noisy sensor can't fill every slot
+                topPeaks: sensors.map(sensor => sensor.worst).sort((a, b) => b.peak_pm2_5 - a.peak_pm2_5).slice(0, 3),
+                sensors: sensors.sort((a, b) => b.minutes - a.minutes),
+                totalMinutes: events.reduce((sum, event) => sum + event.duration_minutes, 0),
+                sustained: events.filter(event => event.duration_minutes >= 30).length,
+                busiest: days.reduce((best, day) => (day.count > (best ? best.count : 0) ? day : best), null),
+            };
+        }
+
+        function renderSummary(data, week) {
+            const first = dayLabel(week.days[0].key, { month: "short", day: "numeric" });
+            const last = dayLabel(week.days[week.days.length - 1].key, { month: "short", day: "numeric", year: "numeric" });
+            document.getElementById("recap-range").textContent = `Past 7 days · ${first} – ${last}`;
+            const summary = document.getElementById("recap-summary");
+            if (!week.events.length) {
+                summary.innerHTML = `<strong>Clean air this week.</strong> None of the ${data.sensor_count} sensors recorded PM2.5 above 35 µg/m³ in the past 7 days.`;
                 return;
             }
+            const worstAqi = pmToAqi(week.worst.peak_pm2_5);
+            const staleHours = week.lastReading ? (Date.now() - new Date(week.lastReading)) / 3600000 : 0;
+            const staleNote = staleHours > 3
+                ? `<span class="d-block small text-muted mt-2">Readings have been paused since ${escapeHtml(whenLabel(week.lastReading))}, so the most recent days are incomplete.</span>`
+                : "";
+            const busiest = week.busiest
+                ? `The busiest day was <strong>${escapeHtml(dayLabel(week.busiest.key, { weekday: "long", month: "short", day: "numeric" }))}</strong> with ${week.busiest.count} spike${week.busiest.count === 1 ? "" : "s"}. `
+                : "";
+            summary.innerHTML = `Over the past 7 days, <strong>${week.sensors.length} of ${data.sensor_count} sensors</strong> recorded unhealthy PM2.5 spikes, `
+                + `<strong>${week.events.length} in all</strong>. ${busiest}`
+                + `The worst air was at <strong>${escapeHtml(week.worst.sensor_name)}</strong> on ${escapeHtml(whenLabel(week.worst.start))}, `
+                + `peaking at <strong>${week.worst.peak_pm2_5.toFixed(1)} µg/m³</strong> (${escapeHtml(worstAqi.category)}).${staleNote}`;
+        }
+
+        function renderStats(data, week) {
+            document.getElementById("stat-events").textContent = week.events.length;
+            document.getElementById("stat-events-sub").textContent = week.events.length ? `${week.sustained} lasted 30+ min` : "none this week";
+            document.getElementById("stat-sensors").innerHTML = `${week.sensors.length}<span class="fs-6 text-muted fw-normal"> / ${data.sensor_count}</span>`;
+            document.getElementById("stat-time").textContent = formatDuration(week.totalMinutes);
+            const worstEl = document.getElementById("stat-worst");
+            const worstSub = document.getElementById("stat-worst-sub");
+            if (week.worst) {
+                worstEl.innerHTML = `${week.worst.peak_pm2_5.toFixed(0)}<span class="fs-6 text-muted fw-normal"> µg/m³</span>`;
+                worstSub.innerHTML = `${aqiBadge(week.worst.peak_pm2_5, "sm")} ${escapeHtml(week.worst.sensor_name)}`;
+            } else {
+                worstEl.textContent = "—";
+                worstSub.textContent = "";
+            }
+        }
+
+        function topEventCard(event, label) {
+            const a = pmToAqi(event.peak_pm2_5);
+            const onMap = markers[event.sensor_id]
+                ? `<button type="button" class="btn btn-sm btn-outline-primary js-show-on-map" data-sensor-id="${escapeHtml(event.sensor_id)}">Show on map</button>`
+                : "";
+            return `
+                <div class="col-md-6 col-xl-3">
+                    <div class="card border-0 shadow-sm h-100 top-event" style="--aqi-color:${a.color};">
+                        <div class="card-body d-flex flex-column">
+                            <div class="rank text-uppercase text-muted mb-2">${escapeHtml(label)}</div>
+                            <div class="fw-semibold">${escapeHtml(event.sensor_name)}</div>
+                            <div class="small text-muted mb-3">${escapeHtml(whenLabel(event.start))}${event.location ? ` · ${escapeHtml(event.location)}` : ""}</div>
+                            <div class="d-flex align-items-baseline gap-2 mb-2">
+                                <span class="peak-value">${event.peak_pm2_5.toFixed(1)}</span><span class="text-muted small">µg/m³ peak</span>
+                            </div>
+                            <div class="mb-3">${aqiBadge(event.peak_pm2_5, "sm")}</div>
+                            <div class="metrics mb-3">
+                                <div>Lasted<strong>${escapeHtml(formatDuration(event.duration_minutes))}</strong></div>
+                                <div>Average<strong>${event.mean_pm2_5.toFixed(1)}</strong></div>
+                                <div>Readings<strong>${event.reading_count}</strong></div>
+                            </div>
+                            <div class="mt-auto">${onMap}</div>
+                        </div>
+                    </div>
+                </div>`;
+        }
+
+        function renderTopEvents(week) {
+            const cards = week.topPeaks.map((event, i) => topEventCard(event, `#${i + 1} highest peak`));
+            if (week.longest && !week.topPeaks.includes(week.longest)) cards.push(topEventCard(week.longest, "Longest episode"));
+            document.getElementById("top-events").innerHTML = cards.length
+                ? cards.join("")
+                : '<div class="col-12"><div class="card border-0 shadow-sm"><div class="card-body text-muted">No spikes to highlight this week.</div></div></div>';
+        }
+
+        function renderDayChart(week) {
+            const max = Math.max(1, ...week.days.map(day => day.count));
+            document.getElementById("day-chart").innerHTML = week.days.map(day => {
+                const tip = day.noData ? "No readings collected" : day.count
+                    ? `<strong>${day.count} spike${day.count === 1 ? "" : "s"}</strong><br>Worst: ${day.worst.peak_pm2_5.toFixed(1)} µg/m³ (${escapeHtml(pmToAqi(day.worst.peak_pm2_5).category)})<br>at ${escapeHtml(day.worst.sensor_name)}`
+                    : "No spikes";
+                const selected = selectedDay === day.key;
+                // Label only the busiest day (and the selected one); the tooltip has the rest
+                const showLabel = (day.count === max && day.count > 0) || selected;
+                return `
+                    <button type="button" class="day-col ${day.count ? "" : "empty"} ${day.noData ? "nodata" : ""} ${selected ? "selected" : ""}" data-day="${day.key}"
+                            aria-pressed="${selected}" aria-label="${escapeHtml(dayLabel(day.key, { weekday: "long", month: "long", day: "numeric" }))}: ${day.noData ? "no data" : `${day.count} spikes`}">
+                        <span class="day-tooltip">${tip}</span>
+                        <span class="bar-label">${day.noData ? "No data" : showLabel ? day.count : ""}</span>
+                        <span class="bar-area"><span class="bar" style="height:${Math.round(day.count / max * 100)}%"></span></span>
+                        <span class="day-name">${escapeHtml(dayLabel(day.key, { weekday: "short" }))}</span>
+                        <span class="day-date">${escapeHtml(dayLabel(day.key, { month: "short", day: "numeric" }))}</span>
+                    </button>`;
+            }).join("");
+        }
+
+        function renderSensorRanking(week) {
+            const top = week.sensors.slice(0, 6);
+            const max = Math.max(1, ...top.map(sensor => sensor.minutes));
+            document.getElementById("sensor-ranking").innerHTML = top.length ? top.map((sensor, i) => `
+                <li class="sensor-rank">
+                    <span class="pos">${i + 1}</span>
+                    <span><span class="fw-semibold">${escapeHtml(sensor.name)}</span>
+                        <span class="small text-muted d-block">${sensor.count} spike${sensor.count === 1 ? "" : "s"} · ${escapeHtml(formatDuration(sensor.minutes))} total</span></span>
+                    <span>${aqiBadge(sensor.worst.peak_pm2_5, "sm")}</span>
+                    <span class="track"><span class="fill d-block" style="width:${Math.round(sensor.minutes / max * 100)}%"></span></span>
+                </li>`).join("") : '<li class="text-muted small">No sensors went above 35 µg/m³ this week.</li>';
+        }
+
+        function renderEventTable(data) {
             const selectedSensor = eventSensorFilter.value;
-            const visibleEvents = selectedSensor === "all"
-                ? data.events
-                : data.events.filter(event => String(event.sensor_id) === selectedSensor);
+            const visibleEvents = data.events.filter(event =>
+                (selectedSensor === "all" || String(event.sensor_id) === selectedSensor)
+                && (!selectedDay || dayKey(event.start) === selectedDay));
             eventsBody.innerHTML = visibleEvents.length ? visibleEvents.map(event => `
                 <tr>
-                    <td class="ps-3 text-nowrap"><div>${escapeHtml(formatLocal(event.start))}</div><div class="small text-muted">to ${escapeHtml(formatLocal(event.end))}</div></td>
-                    <td><a class="fw-semibold" href="https://map.purpleair.com/?select=${encodeURIComponent(event.sensor_id)}" target="_blank" rel="noopener">${escapeHtml(event.sensor_name)}</a><div class="small text-muted">#${escapeHtml(event.sensor_id)}${event.location ? ` · ${escapeHtml(event.location)}` : ""}</div></td>
-                    <td class="text-nowrap">${escapeHtml(formatDuration(event.duration_minutes))}</td>
-                    <td class="text-nowrap fw-semibold">${Number(event.peak_pm2_5).toFixed(1)} µg/m³</td>
-                    <td class="text-nowrap">${Number(event.mean_pm2_5).toFixed(1)} µg/m³</td>
-                    <td class="pe-3">${event.reading_count}</td>
-                </tr>`).join("") : `<tr><td colspan="6" class="p-4 text-center text-muted">${selectedSensor === "all" ? "No readings above 35 µg/m³ were found in the selected period." : "No spike events for this sensor in the selected period."}</td></tr>`;
-            const sensorLabel = selectedSensor === "all" ? `${data.sensor_count} sensors` : eventSensorFilter.selectedOptions[0].textContent;
-            eventsState.textContent = `Showing ${visibleEvents.length} of ${data.events.length} event${data.events.length === 1 ? "" : "s"} for ${sensorLabel}. Checked ${formatLocal(data.fetched_at)}.`;
+                    <td class="ps-3 text-nowrap" data-sort-value="${escapeHtml(event.start)}"><div>${escapeHtml(formatLocal(event.start))}</div><div class="small text-muted">to ${escapeHtml(formatLocal(event.end))}</div></td>
+                    <td data-sort-value="${escapeHtml(event.sensor_name)}"><a class="fw-semibold" href="https://map.purpleair.com/?select=${encodeURIComponent(event.sensor_id)}" target="_blank" rel="noopener">${escapeHtml(event.sensor_name)}</a><div class="small text-muted">#${escapeHtml(event.sensor_id)}${event.location ? ` · ${escapeHtml(event.location)}` : ""}</div></td>
+                    <td class="text-nowrap" data-sort-value="${event.duration_minutes}">${escapeHtml(formatDuration(event.duration_minutes))}</td>
+                    <td class="text-nowrap" data-sort-value="${event.peak_pm2_5}"><div class="fw-semibold">${Number(event.peak_pm2_5).toFixed(1)} µg/m³</div>${aqiBadge(event.peak_pm2_5, "sm")}</td>
+                    <td class="text-nowrap" data-sort-value="${event.mean_pm2_5}">${Number(event.mean_pm2_5).toFixed(1)} µg/m³</td>
+                    <td class="pe-3" data-sort-value="${event.reading_count}">${event.reading_count}</td>
+                </tr>`).join("") : `<tr><td colspan="6" class="p-4 text-center text-muted">No spike events match these filters.</td></tr>`;
+            eventsSort.refresh();
+            const filters = [];
+            if (selectedSensor !== "all") filters.push(eventSensorFilter.selectedOptions[0].textContent);
+            if (selectedDay) filters.push(dayLabel(selectedDay, { weekday: "long", month: "short", day: "numeric" }));
+            eventsState.textContent = `Showing ${visibleEvents.length} of ${data.events.length} event${data.events.length === 1 ? "" : "s"}${filters.length ? ` for ${filters.join(", ")}` : ""}. Updated ${formatLocal(data.fetched_at)}.`;
+            dayChip.classList.toggle("d-none", !selectedDay);
+            if (selectedDay) document.getElementById("day-filter-label").textContent = dayLabel(selectedDay, { weekday: "short", month: "short", day: "numeric" });
+        }
+
+        function renderEvents(data) {
+            loadedEvents = data;
+            const week = summarizeWeek(data);
+            recapLoading.classList.add("d-none");
+            recapEl.classList.remove("d-none");
+            renderSummary(data, week);
+            renderStats(data, week);
+            renderTopEvents(week);
+            renderDayChart(week);
+            renderSensorRanking(week);
+            renderEventTable(data);
             if (data.failed_sensor_count) {
                 const failures = data.errors.map(error => `${error.sensor_name} (#${error.sensor_id}): ${error.message}`).join("; ");
-                eventsErrors.textContent = `History could not be loaded for ${data.failed_sensor_count} of ${data.sensor_count} sensors.${failures ? ` ${failures}` : ""}`;
+                eventsErrors.textContent = `Events could not be loaded for ${data.failed_sensor_count} of ${data.sensor_count} sensors.${failures ? ` ${failures}` : ""}`;
                 eventsErrors.classList.remove("d-none");
             } else {
                 eventsErrors.classList.add("d-none");
@@ -398,20 +1045,51 @@
             try {
                 const response = await fetch("/api/events");
                 const data = await response.json();
-                if (!response.ok) throw new Error(data.error || "Could not load spike history.");
+                if (!response.ok) throw new Error(data.error || "Could not load spike events.");
                 renderEvents(data);
                 eventsLoaded = true;
             } catch (error) {
-                eventsState.textContent = "Spike history could not be loaded.";
+                recapLoading.innerHTML = `<div class="card-body text-danger">Spike events could not be loaded: ${escapeHtml(error.message)}</div>`;
+                eventsState.textContent = "Spike events could not be loaded.";
                 eventsBody.innerHTML = `<tr><td colspan="6" class="p-4 text-center text-danger">${escapeHtml(error.message)}</td></tr>`;
             }
+        }
+
+        function showSensorOnMap(sensorId) {
+            const marker = markers[sensorId];
+            if (!marker) return;
+            const dashboardTab = document.getElementById("dashboard-tab");
+            dashboardTab.addEventListener("shown.bs.tab", () => {
+                document.getElementById("map").scrollIntoView({ behavior: "smooth", block: "center" });
+                // Open the popup after the fly animation so Leaflet can pan it fully into view
+                map.once("moveend", () => marker.openPopup());
+                map.flyTo(marker.getLatLng(), Math.max(map.getZoom(), 14));
+            }, { once: true });
+            bootstrap.Tab.getOrCreateInstance(dashboardTab).show();
+        }
+
+        function selectDay(key) {
+            selectedDay = key;
+            renderDayChart(summarizeWeek(loadedEvents));
+            renderEventTable(loadedEvents);
         }
 
         document.getElementById("events-tab").addEventListener("shown.bs.tab", () => {
             if (!eventsLoaded) loadEvents();
         });
         eventSensorFilter.addEventListener("change", () => {
-            if (loadedEvents) renderEvents(loadedEvents);
+            if (loadedEvents) renderEventTable(loadedEvents);
+        });
+        document.getElementById("day-chart").addEventListener("click", e => {
+            const col = e.target.closest(".day-col");
+            if (!col || !loadedEvents) return;
+            selectDay(selectedDay === col.dataset.day ? null : col.dataset.day);
+            if (selectedDay) document.getElementById("events-details").scrollIntoView({ behavior: "smooth", block: "start" });
+        });
+        document.getElementById("day-filter-clear").addEventListener("click", () => selectDay(null));
+        document.getElementById("top-events").addEventListener("click", e => {
+            const button = e.target.closest(".js-show-on-map");
+            if (button) showSensorOnMap(button.dataset.sensorId);
         });
         document.getElementById("dashboard-tab").addEventListener("shown.bs.tab", () => map.invalidateSize());
     </script>
