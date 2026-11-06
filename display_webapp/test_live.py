@@ -11,7 +11,7 @@ from display_webapp.app import LIVE_MAX_MINUTES, LIVE_SESSION_PARTITION, LIVE_SE
 
 ENV = {
     "AZURE_STORAGE_CONNECTION_STRING": "storage",
-    "LIVE_SENSOR_API_KEY": "secret-api-key",
+    "PURPLEAIR_API_KEY": "secret-api-key",
     "LIVE_SENSOR_INDEX": "12345",
     "LIVE_SENSOR_READ_KEY": "secret-read-key",
 }
@@ -172,7 +172,7 @@ class LiveSensorTests(unittest.TestCase):
         self.assertNotIn("secret", json.dumps(state))
 
     def test_start_is_refused_without_setup(self):
-        with patch.dict("os.environ", {"LIVE_SENSOR_API_KEY": ""}):
+        with patch.dict("os.environ", {"PURPLEAIR_API_KEY": ""}):
             response = self.client.post("/api/live/start")
             state = self.client.get("/api/live").get_json()
 

@@ -184,7 +184,7 @@ The **Live Sensor** tab follows one sensor through the PurpleAir API. Nothing is
 - **While recording:** a new report is requested about every 2 minutes, only while someone has the tab open. One request is made no matter how many people are watching.
 - **Limits:** recording stops by itself after 2 hours. Readings are stored in the `LiveSensor` table, which is created on the first recording.
 - **Setup:** in Azure Portal, open the **App Service** `healthygulf-dashboard-app` and add these under **Environment variables** (also add them to `.env` for local runs):
-  - `LIVE_SENSOR_API_KEY`: a PurpleAir **READ** key
+  - `PURPLEAIR_API_KEY`: a PurpleAir **READ** key (already set if the app has one)
   - `LIVE_SENSOR_INDEX`: the sensor's number
   - `LIVE_SENSOR_READ_KEY`: the sensor's read key, if it's private
 

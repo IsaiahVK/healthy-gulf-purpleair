@@ -327,7 +327,7 @@ def api_events():
 
 
 def _live_config():
-    api_key = os.environ.get("LIVE_SENSOR_API_KEY")
+    api_key = os.environ.get("PURPLEAIR_API_KEY")
     sensor_index = os.environ.get("LIVE_SENSOR_INDEX")
     if not api_key or not sensor_index:
         return None
