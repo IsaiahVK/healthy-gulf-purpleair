@@ -9,8 +9,10 @@ import sys
 import tempfile
 import time
 from dotenv import load_dotenv
-from azure.data.tables import TableServiceClient
-from azure.core.exceptions import ResourceNotFoundError
+import requests
+from azure.data.tables import TableServiceClient, UpdateMode
+from azure.core import MatchConditions
+from azure.core.exceptions import ResourceExistsError, ResourceModifiedError, ResourceNotFoundError
 
 # Load environment variables from .env in project root if present
 root_env = Path(__file__).resolve().parent.parent / ".env"
@@ -30,6 +32,15 @@ SPIKE_EVENTS_TABLE = "SpikeEvents"
 READING_WINDOWS_HOURS = (1, 6, 24, 48, 168)
 # A sensor that hasn't measured anything for this long is shown as offline
 OFFLINE_AFTER = timedelta(hours=2)
+
+# Live test sensor: recording state and readings share one table
+LIVE_TABLE = "LiveSensor"
+LIVE_SESSION_PARTITION = "session"
+LIVE_SESSION_ROW = "current"
+LIVE_FIELDS = "pm2.5_atm_a,pm2.5_atm_b,temperature,humidity,last_seen"
+LIVE_MAX_MINUTES = 120
+LIVE_REPORT_SECONDS = 120
+LIVE_RETRY_SECONDS = 60
 
 # Multi-process caching across Gunicorn workers (L1 memory + L2 shared temp disk)
 DASHBOARD_CACHE_SECONDS = 180
@@ -313,6 +324,181 @@ def api_events():
         app.logger.exception("Unable to load PurpleAir spike history")
         return jsonify({"error": str(exc)}), 500
     return jsonify(data)
+
+
+def _live_config():
+    api_key = os.environ.get("LIVE_SENSOR_API_KEY")
+    sensor_index = os.environ.get("LIVE_SENSOR_INDEX")
+    if not api_key or not sensor_index:
+        return None
+    return {"api_key": api_key, "sensor_index": sensor_index, "read_key": os.environ.get("LIVE_SENSOR_READ_KEY")}
+
+
+def _live_table():
+    connection_string = os.environ.get("AZURE_STORAGE_CONNECTION_STRING")
+    if not connection_string:
+        raise RuntimeError("AZURE_STORAGE_CONNECTION_STRING environment variable is not set.")
+    return TableServiceClient.from_connection_string(conn_str=connection_string).get_table_client(LIVE_TABLE)
+
+
+def _live_session(table):
+    try:
+        return table.get_entity(partition_key=LIVE_SESSION_PARTITION, row_key=LIVE_SESSION_ROW)
+    except ResourceNotFoundError:
+        return None
+
+
+def _live_is_recording(session, now):
+    return bool(session) and session.get("status") == "recording" and now < session["ends_at"]
+
+
+def _live_collect(table, session, config, now):
+    """Fetch the sensor's next report if one is due, and return the session's updated fields.
+
+    Called while someone has the page open, so nothing is spent otherwise. The etag
+    claim means only one Gunicorn worker calls PurpleAir, however many people are watching.
+    """
+    if now < session.get("next_fetch_at", 0):
+        return {}
+    claim = dict(session)
+    claim["next_fetch_at"] = int(now) + LIVE_RETRY_SECONDS
+    try:
+        table.update_entity(claim, mode=UpdateMode.REPLACE, etag=session.metadata["etag"], match_condition=MatchConditions.IfNotModified)
+    except ResourceModifiedError:
+        return {}
+
+    params = {"fields": LIVE_FIELDS}
+    if config["read_key"]:
+        params["read_key"] = config["read_key"]
+    updates = {"error": "", "next_fetch_at": claim["next_fetch_at"]}
+    try:
+        response = requests.get(
+            f"https://api.purpleair.com/v1/sensors/{config['sensor_index']}",
+            headers={"X-API-Key": config["api_key"]},
+            params=params,
+            timeout=10,
+        )
+        response.raise_for_status()
+        sensor = response.json()["sensor"]
+        last_seen = int(sensor["last_seen"])
+        pm_a = _first_float(sensor.get("pm2.5_atm_a"))
+        pm_b = _first_float(sensor.get("pm2.5_atm_b"))
+        channels = [value for value in (pm_a, pm_b) if value is not None]
+        if channels and last_seen != session.get("last_seen"):
+            reading = {
+                "PartitionKey": session["session_id"],
+                "RowKey": f"{last_seen:012d}",
+                "pm": round(sum(channels) / len(channels), 2),
+                "pm_a": pm_a,
+                "pm_b": pm_b,
+                "temperature": _first_float(sensor.get("temperature")),
+                "humidity": _first_float(sensor.get("humidity")),
+            }
+            table.upsert_entity({k: v for k, v in reading.items() if v is not None})
+            updates["last_seen"] = last_seen
+        # A new report is due about 2 minutes after the last one, so wait until then to ask again
+        updates["next_fetch_at"] = int(max(last_seen + LIVE_REPORT_SECONDS + 5, now + LIVE_RETRY_SECONDS))
+    except requests.RequestException as exc:
+        # Only the status code: the exception text includes the request URL and read key
+        status = getattr(exc.response, "status_code", None)
+        updates["error"] = f"PurpleAir returned an error ({status})." if status else "Couldn't reach PurpleAir."
+    except (KeyError, TypeError, ValueError):
+        updates["error"] = "PurpleAir sent a response that couldn't be read."
+    table.update_entity({"PartitionKey": LIVE_SESSION_PARTITION, "RowKey": LIVE_SESSION_ROW, **updates}, mode=UpdateMode.MERGE)
+    return updates
+
+
+def _live_sample(entity):
+    sample = {
+        "t": int(entity["RowKey"]) * 1000,
+        "pm": entity["pm"],
+        "pm_a": entity.get("pm_a"),
+        "pm_b": entity.get("pm_b"),
+        "temperature": entity.get("temperature"),
+        "humidity": entity.get("humidity"),
+    }
+    aqi = pm25_to_aqi(entity["pm"])
+    sample.update(aqi=aqi["aqi"], category=aqi["category"], color=aqi["color"], text_color=aqi["text_color"])
+    return sample
+
+
+def live_state(after=0):
+    """The page's view of the recording. Also collects a new report when one is due."""
+    config = _live_config()
+    now = time.time()
+    state = {"configured": bool(config), "recording": False, "session_id": None, "ends_at": None, "error": "",
+             "samples": [], "server_time": int(now * 1000), "report_seconds": LIVE_REPORT_SECONDS}
+    if not config:
+        return state
+    table = _live_table()
+    session = _live_session(table)
+    if not session:
+        return state
+    state["recording"] = _live_is_recording(session, now)
+    state["session_id"] = session["session_id"]
+    state["ends_at"] = session["ends_at"] * 1000
+    state["error"] = session.get("error", "")
+    if state["recording"]:
+        state["error"] = _live_collect(table, session, config, now).get("error", state["error"])
+    rows = table.query_entities(
+        query_filter="PartitionKey eq @session_id and RowKey gt @after",
+        parameters={"session_id": session["session_id"], "after": f"{after:012d}"},
+    )
+    state["samples"] = sorted((_live_sample(row) for row in rows), key=lambda sample: sample["t"])
+    return state
+
+
+def live_start():
+    table = _live_table()
+    try:
+        table.create_table()
+    except ResourceExistsError:
+        pass
+    now = time.time()
+    # Starting while a recording is running just joins it
+    if not _live_is_recording(_live_session(table), now):
+        table.upsert_entity({
+            "PartitionKey": LIVE_SESSION_PARTITION,
+            "RowKey": LIVE_SESSION_ROW,
+            "session_id": datetime.fromtimestamp(now, timezone.utc).strftime("%Y%m%d%H%M%S"),
+            "status": "recording",
+            "ends_at": int(now) + LIVE_MAX_MINUTES * 60,
+            "next_fetch_at": 0,
+            "error": "",
+        }, mode=UpdateMode.REPLACE)
+    return live_state()
+
+
+def live_stop():
+    table = _live_table()
+    if _live_session(table):
+        table.update_entity({"PartitionKey": LIVE_SESSION_PARTITION, "RowKey": LIVE_SESSION_ROW, "status": "stopped"}, mode=UpdateMode.MERGE)
+    return live_state()
+
+
+@app.route('/api/live')
+def api_live():
+    return _live_response(lambda: live_state(request.args.get("after", 0, type=int)))
+
+
+@app.route('/api/live/start', methods=['POST'])
+def api_live_start():
+    if not _live_config():
+        return jsonify({"error": "The live sensor isn't set up on this server."}), 503
+    return _live_response(live_start)
+
+
+@app.route('/api/live/stop', methods=['POST'])
+def api_live_stop():
+    return _live_response(live_stop)
+
+
+def _live_response(load):
+    try:
+        return jsonify(load())
+    except Exception:
+        app.logger.exception("Live sensor request failed")
+        return jsonify({"error": "Live sensor data is unavailable right now."}), 500
 
 
 if __name__ == '__main__':

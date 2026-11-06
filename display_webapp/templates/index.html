@@ -135,6 +135,17 @@
 
         .day-chip { font-size: .8rem; padding: .45rem .6rem; display: inline-flex; align-items: center; }
         .day-chip .btn-close { width: .5em; height: .5em; }
+        /* Live test sensor */
+        .live-pill { font-size: .85rem; }
+        .live-hero { background: #6c757d; color: #fff; min-height: 340px; transition: background-color .4s ease; }
+        .live-hero-label { opacity: .85; }
+        .live-aqi { font-size: clamp(4.5rem, 10vw, 7.5rem); font-weight: 800; line-height: 1; font-variant-numeric: tabular-nums; }
+        .live-key { display: inline-block; width: 1.1rem; height: 2px; margin-right: .35rem; vertical-align: middle; }
+        #live-chart-box { position: relative; height: 280px; }
+        #live-chart { width: 100%; height: 100%; display: block; }
+        #live-chart text { font-size: 12px; fill: #6c757d; }
+        #live-tooltip { position: absolute; display: none; background: #212529; color: #fff; font-size: .8rem; line-height: 1.4; padding: .4rem .55rem; border-radius: .35rem; pointer-events: none; white-space: nowrap; z-index: 2; }
+        .live-chart-empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; text-align: center; padding: 1rem; }
     </style>
 </head>
 <body>
@@ -154,6 +165,9 @@
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="events-tab" data-bs-toggle="tab" data-bs-target="#events-panel" type="button" role="tab" aria-controls="events-panel" aria-selected="false">Events</button>
+            </li>
+            <li class="nav-item" role="presentation">
+                <button class="nav-link" id="live-tab" data-bs-toggle="tab" data-bs-target="#live-panel" type="button" role="tab" aria-controls="live-panel" aria-selected="false">Live Sensor</button>
             </li>
             <li class="nav-item" role="presentation">
                 <button class="nav-link" id="about-tab" data-bs-toggle="tab" data-bs-target="#about-panel" type="button" role="tab" aria-controls="about-panel" aria-selected="false">About the Project</button>
@@ -388,6 +402,104 @@
                     </table>
                 </div>
             </div>
+        </section>
+
+        <section class="tab-pane fade" id="live-panel" role="tabpanel" aria-labelledby="live-tab" tabindex="0">
+            <div class="d-flex flex-wrap justify-content-between align-items-start gap-3 mb-3">
+                <div>
+                    <h2 class="h3 mb-1">Live test sensor</h2>
+                    <p class="text-muted small mb-0" id="live-intro">Start a recording to follow our test sensor's readings as they arrive, about every 2 minutes.</p>
+                </div>
+                <button type="button" class="btn btn-primary" id="live-toggle" disabled>Start recording</button>
+            </div>
+
+            <div class="d-flex flex-wrap align-items-center gap-2 mb-3" aria-live="polite">
+                <span class="badge rounded-pill text-bg-secondary live-pill" id="live-pill">Not recording</span>
+                <span class="small text-muted" id="live-status"></span>
+            </div>
+            <div class="alert alert-danger py-2 small d-none" id="live-error" role="alert"></div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-lg-4">
+                    <div class="card border-0 shadow-sm h-100 live-hero" id="live-hero">
+                        <div class="card-body d-flex flex-column justify-content-center text-center">
+                            <div class="small fw-semibold live-hero-label" id="live-hero-label">Air quality</div>
+                            <div class="live-aqi" id="live-aqi"></div>
+                            <div class="fs-4 fw-bold" id="live-category">No readings yet</div>
+                            <div class="mt-1" id="live-pm"></div>
+                        </div>
+                    </div>
+                </div>
+                <div class="col-lg-8">
+                    <div class="card border-0 shadow-sm h-100">
+                        <div class="card-body">
+                            <div class="d-flex flex-wrap justify-content-between align-items-center gap-2 mb-2">
+                                <div>
+                                    <h3 class="h6 mb-1">PM2.5 from each of the sensor's lasers</h3>
+                                    <div class="small text-muted">
+                                        <span class="me-3"><i class="live-key" style="background:#0081b8"></i>Laser A</span>
+                                        <span id="live-legend-b"><i class="live-key" style="background:#d9730d"></i>Laser B</span>
+                                    </div>
+                                </div>
+                                <div class="btn-group btn-group-sm" role="group" aria-label="Time window">
+                                    <button type="button" class="btn btn-outline-secondary" data-live-minutes="10">10 min</button>
+                                    <button type="button" class="btn btn-outline-secondary active" data-live-minutes="30" aria-pressed="true">30 min</button>
+                                    <button type="button" class="btn btn-outline-secondary" data-live-minutes="60">1 hr</button>
+                                    <button type="button" class="btn btn-outline-secondary" data-live-minutes="120">2 hr</button>
+                                </div>
+                            </div>
+                            <div id="live-chart-box">
+                                <svg id="live-chart" role="img" aria-label="Line chart of recent PM2.5 readings"></svg>
+                                <div class="live-chart-empty text-muted" id="live-chart-empty">Readings will appear here once a recording starts.</div>
+                                <div id="live-tooltip"></div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="alert alert-secondary py-2 d-none" id="live-banner" aria-live="assertive"></div>
+
+            <div class="row g-3 mb-3">
+                <div class="col-6 col-lg-3"><div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="text-muted small">Peak this recording</div>
+                    <div class="stat-value" id="live-peak">—</div>
+                    <div class="small text-muted">µg/m³ PM2.5</div>
+                </div></div></div>
+                <div class="col-6 col-lg-3"><div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="text-muted small">Temperature</div>
+                    <div class="stat-value" id="live-temp">—</div>
+                    <div class="small text-muted">inside the sensor; reads warm</div>
+                </div></div></div>
+                <div class="col-6 col-lg-3"><div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="text-muted small">Humidity</div>
+                    <div class="stat-value" id="live-humidity">—</div>
+                    <div class="small text-muted">relative humidity</div>
+                </div></div></div>
+                <div class="col-6 col-lg-3"><div class="card stat-card border-0 shadow-sm h-100"><div class="card-body">
+                    <div class="text-muted small">Readings</div>
+                    <div class="stat-value" id="live-count">0</div>
+                    <div class="small text-muted">about every 2 minutes</div>
+                </div></div></div>
+            </div>
+
+            <div class="card border-0 shadow-sm mb-3">
+                <div class="card-body">
+                    <h3 class="h6">Spikes this recording</h3>
+                    <div class="table-responsive d-none" id="live-spikes-wrap">
+                        <table class="table table-sm mb-0 align-middle">
+                            <thead><tr><th>Started</th><th>Lasted</th><th>Peak PM2.5</th><th>Peak air quality</th></tr></thead>
+                            <tbody id="live-spikes"></tbody>
+                        </table>
+                    </div>
+                    <p class="small text-muted mb-0" id="live-spikes-none">None yet. A spike starts when PM2.5 goes above 35 µg/m³.</p>
+                </div>
+            </div>
+
+            <p class="text-muted small mb-0">
+                New readings are collected while this tab is open, and recording stops by itself after 2 hours.
+                AQI is estimated from the latest reading; official AQI uses longer averages.
+            </p>
         </section>
 
         <section class="tab-pane fade" id="about-panel" role="tabpanel" aria-labelledby="about-tab" tabindex="0">
@@ -1091,6 +1203,268 @@
             const button = e.target.closest(".js-show-on-map");
             if (button) showSensorOnMap(button.dataset.sensorId);
         });
+        // ---------- live test sensor ----------
+        (() => {
+            const LIVE_THRESHOLD = 35;
+            const POLL_MS = 5000;
+            const $ = id => document.getElementById(id);
+            let sessionId = null;
+            let samples = [];
+            let state = null;
+            let pollTimer = null;
+            let busy = false;
+            let windowMinutes = 30;
+            let clockOffset = 0;
+            let hoverX = null;
+
+            const now = () => Date.now() + clockOffset;
+            const clock = (t, seconds = false) => new Date(t).toLocaleTimeString([], { hour: "numeric", minute: "2-digit", ...(seconds ? { second: "2-digit" } : {}) });
+            const value = (v, digits = 1) => (v === null || v === undefined) ? "—" : Number(v).toFixed(digits);
+            const latest = () => samples[samples.length - 1];
+            // A report is due every 2 minutes, so 3 missed reports means the sensor has stopped reporting
+            const isFresh = () => !!latest() && now() - latest().t <= state.report_seconds * 3000;
+
+            function age(t) {
+                const seconds = Math.max(0, Math.round((now() - t) / 1000));
+                return seconds < 90 ? `${seconds}s ago` : `${Math.round(seconds / 60)} min ago`;
+            }
+
+            function renderStatus() {
+                const pill = $("live-pill"), status = $("live-status"), toggle = $("live-toggle");
+                toggle.disabled = busy || !state.configured;
+                toggle.textContent = state.recording ? "Stop recording" : "Start recording";
+                toggle.classList.toggle("btn-primary", !state.recording);
+                toggle.classList.toggle("btn-outline-danger", state.recording);
+                const errorBox = $("live-error");
+                errorBox.textContent = state.error || "";
+                errorBox.classList.toggle("d-none", !state.error);
+
+                pill.className = "badge rounded-pill live-pill";
+                if (!state.configured) {
+                    pill.classList.add("text-bg-secondary");
+                    pill.textContent = "Not available";
+                    status.textContent = "The live sensor isn't set up on this server.";
+                } else if (!state.recording) {
+                    pill.classList.add("text-bg-secondary");
+                    pill.textContent = "Not recording";
+                    status.textContent = latest() ? `Showing the last recording. Its final reading was ${age(latest().t)}.` : "";
+                } else if (!latest()) {
+                    pill.classList.add("text-bg-primary");
+                    pill.textContent = "Recording";
+                    status.textContent = "Asking the sensor for its latest report…";
+                } else if (!isFresh()) {
+                    pill.classList.add("text-bg-warning");
+                    pill.textContent = "Waiting for sensor";
+                    status.textContent = `The sensor hasn't reported recently. Last reading ${age(latest().t)}.`;
+                } else {
+                    pill.classList.add("text-bg-success");
+                    pill.textContent = "● Recording";
+                    status.textContent = `Last measured ${age(latest().t)} · stops by itself at ${clock(state.ends_at)}`;
+                }
+            }
+
+            function renderHero() {
+                const hero = $("live-hero");
+                const sample = latest();
+                const current = sample && state.recording && isFresh();
+                hero.style.background = current ? sample.color : "#6c757d";
+                hero.style.color = current ? sample.text_color : "#fff";
+                $("live-hero-label").textContent = current ? "Air quality right now" : "Air quality";
+                $("live-aqi").textContent = current ? sample.aqi : "";
+                $("live-category").textContent = current ? sample.category : sample ? "No current reading" : "No readings yet";
+                $("live-pm").textContent = current
+                    ? `PM2.5: ${value(sample.pm)} µg/m³`
+                    : sample ? `Last reading: ${value(sample.pm)} µg/m³ at ${clock(sample.t)}` : "";
+            }
+
+            function findSpikes() {
+                const spikes = [];
+                let run = null;
+                samples.forEach(sample => {
+                    if (sample.pm > LIVE_THRESHOLD) {
+                        if (!run) { run = { start: sample.t, end: sample.t, peak: sample }; spikes.push(run); }
+                        run.end = sample.t;
+                        if (sample.pm > run.peak.pm) run.peak = sample;
+                    } else {
+                        run = null;
+                    }
+                });
+                return { spikes, active: run };
+            }
+
+            function renderSpikes() {
+                const { spikes, active } = findSpikes();
+                const banner = $("live-banner");
+                const current = state.recording && isFresh();
+                banner.classList.toggle("d-none", !current);
+                if (current) {
+                    banner.className = `alert py-2 ${active ? "alert-danger fw-semibold" : "alert-success"}`;
+                    banner.textContent = active
+                        ? `⚠ Spike detected: PM2.5 is above ${LIVE_THRESHOLD} µg/m³. Started ${clock(active.start)}, peak ${value(active.peak.pm)} µg/m³ so far.`
+                        : `✓ No spike right now. PM2.5 is at or below ${LIVE_THRESHOLD} µg/m³.`;
+                }
+                $("live-spikes").innerHTML = spikes.slice(-6).reverse().map(spike => {
+                    const minutes = Math.round((spike.end - spike.start) / 60000);
+                    const lasted = spike === active && current ? `${formatDuration(minutes)} (ongoing)` : (minutes ? formatDuration(minutes) : "Under 2 min");
+                    return `<tr><td>${escapeHtml(clock(spike.start))}</td><td>${escapeHtml(lasted)}</td><td>${value(spike.peak.pm)} µg/m³</td><td>AQI ${spike.peak.aqi} · ${escapeHtml(spike.peak.category)}</td></tr>`;
+                }).join("");
+                $("live-spikes-wrap").classList.toggle("d-none", !spikes.length);
+                $("live-spikes-none").classList.toggle("d-none", !!spikes.length);
+            }
+
+            function renderTiles() {
+                const sample = latest();
+                const current = sample && state.recording && isFresh();
+                $("live-peak").textContent = samples.length ? value(Math.max(...samples.map(s => s.pm))) : "—";
+                $("live-temp").textContent = current && sample.temperature !== null ? `${value(sample.temperature, 0)} °F` : "—";
+                $("live-humidity").textContent = current && sample.humidity !== null ? `${value(sample.humidity, 0)}%` : "—";
+                $("live-count").textContent = samples.length;
+            }
+
+            function svgNode(name, attrs, text) {
+                const node = document.createElementNS("http://www.w3.org/2000/svg", name);
+                Object.entries(attrs).forEach(([k, v]) => node.setAttribute(k, v));
+                if (text !== undefined) node.textContent = text;
+                return node;
+            }
+
+            function renderChart() {
+                const box = $("live-chart-box");
+                const width = box.clientWidth, height = box.clientHeight;
+                if (!width) return;  // the tab is hidden
+                const svg = $("live-chart");
+                svg.setAttribute("viewBox", `0 0 ${width} ${height}`);
+                const m = { left: 40, right: 14, top: 12, bottom: 26 };
+                const end = now(), start = end - windowMinutes * 60000;
+                const visible = samples.filter(s => s.t >= start);
+                $("live-chart-empty").style.display = visible.length ? "none" : "flex";
+                $("live-legend-b").style.display = samples.some(s => s.pm_b !== null && s.pm_b !== undefined) ? "" : "none";
+
+                const peak = Math.max(LIVE_THRESHOLD * 1.3, ...visible.flatMap(s => [s.pm_a ?? 0, s.pm_b ?? 0]));
+                const step = [5, 10, 20, 25, 50, 100, 200, 250, 500, 1000].find(v => peak * 1.1 / v <= 5) || 2000;
+                const yMax = Math.ceil(peak * 1.1 / step) * step;
+                const x = t => m.left + (t - start) / (end - start) * (width - m.left - m.right);
+                const y = v => height - m.bottom - v / yMax * (height - m.top - m.bottom);
+
+                const nodes = [];
+                for (let v = 0; v <= yMax; v += step) {
+                    nodes.push(svgNode("line", { x1: m.left, x2: width - m.right, y1: y(v), y2: y(v), stroke: "#eef0f2" }));
+                    nodes.push(svgNode("text", { x: m.left - 6, y: y(v) + 4, "text-anchor": "end" }, v));
+                }
+                const ticks = width < 500 ? 2 : 4;
+                for (let i = 0; i <= ticks; i++) {
+                    const t = start + (end - start) * i / ticks;
+                    nodes.push(svgNode("text", { x: x(t), y: height - 7, "text-anchor": i === 0 ? "start" : i === ticks ? "end" : "middle" }, clock(t)));
+                }
+                nodes.push(svgNode("line", { x1: m.left, x2: width - m.right, y1: y(LIVE_THRESHOLD), y2: y(LIVE_THRESHOLD), stroke: "#6c757d", "stroke-width": 1.5, "stroke-dasharray": "5 4" }));
+                nodes.push(svgNode("text", { x: m.left + 6, y: y(LIVE_THRESHOLD) - 6 }, `Spike level: ${LIVE_THRESHOLD} µg/m³`));
+
+                const gapLimit = (state?.report_seconds ?? 120) * 3000;
+                [["pm_a", "#0081b8"], ["pm_b", "#d9730d"]].forEach(([key, color]) => {
+                    let path = "", previous = null, last = null;
+                    visible.forEach(s => {
+                        if (s[key] === null || s[key] === undefined) { previous = null; return; }
+                        path += `${previous === null || s.t - previous > gapLimit ? "M" : "L"}${x(s.t).toFixed(1)} ${y(s[key]).toFixed(1)}`;
+                        previous = s.t;
+                        last = s;
+                    });
+                    if (path) nodes.push(svgNode("path", { d: path, fill: "none", stroke: color, "stroke-width": 2, "stroke-linejoin": "round", "stroke-linecap": "round" }));
+                    if (last) nodes.push(svgNode("circle", { cx: x(last.t), cy: y(last[key]), r: 4, fill: color, stroke: "#fff", "stroke-width": 2 }));
+                });
+
+                const tooltip = $("live-tooltip");
+                tooltip.style.display = "none";
+                if (hoverX !== null && visible.length) {
+                    const nearest = visible.reduce((best, s) => Math.abs(x(s.t) - hoverX) < Math.abs(x(best.t) - hoverX) ? s : best);
+                    nodes.push(svgNode("line", { x1: x(nearest.t), x2: x(nearest.t), y1: m.top, y2: height - m.bottom, stroke: "#adb5bd" }));
+                    tooltip.innerHTML = `<strong>${escapeHtml(clock(nearest.t, true))}</strong><br>Laser A: ${value(nearest.pm_a)} µg/m³`
+                        + (nearest.pm_b !== null && nearest.pm_b !== undefined ? `<br>Laser B: ${value(nearest.pm_b)} µg/m³` : "")
+                        + `<br>AQI ${nearest.aqi} · ${escapeHtml(nearest.category)}`;
+                    tooltip.style.display = "block";
+                    tooltip.style.left = `${Math.min(Math.max(0, x(nearest.t) + 10), width - tooltip.offsetWidth)}px`;
+                    tooltip.style.top = `${m.top}px`;
+                }
+                svg.replaceChildren(...nodes);
+            }
+
+            function render() {
+                renderStatus();
+                renderHero();
+                renderSpikes();
+                renderTiles();
+                renderChart();
+            }
+
+            function applyState(next) {
+                clockOffset = next.server_time - Date.now();
+                if (next.session_id !== sessionId) {
+                    sessionId = next.session_id;
+                    samples = [];
+                }
+                const known = new Set(samples.map(s => s.t));
+                samples.push(...next.samples.filter(s => !known.has(s.t)));
+                state = next;
+                render();
+            }
+
+            function showError(message) {
+                $("live-error").textContent = message;
+                $("live-error").classList.remove("d-none");
+            }
+
+            async function poll() {
+                if (document.hidden) return;
+                try {
+                    const after = latest() ? Math.floor(latest().t / 1000) : 0;
+                    const response = await fetch(`/api/live?after=${after}`, { cache: "no-store" });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error);
+                    applyState(data);
+                } catch (error) {
+                    showError(error.message || "Live sensor data is unavailable right now.");
+                }
+            }
+
+            $("live-toggle").addEventListener("click", async () => {
+                busy = true;
+                $("live-toggle").disabled = true;
+                try {
+                    const response = await fetch(`/api/live/${state?.recording ? "stop" : "start"}`, { method: "POST" });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error);
+                    busy = false;
+                    applyState(data);
+                } catch (error) {
+                    busy = false;
+                    showError(error.message || "That didn't work. Please try again.");
+                    $("live-toggle").disabled = false;
+                }
+            });
+
+            // Only ask the server while this tab is on screen
+            const liveTab = $("live-tab");
+            liveTab.addEventListener("shown.bs.tab", () => {
+                poll();
+                pollTimer = setInterval(poll, POLL_MS);
+            });
+            liveTab.addEventListener("hidden.bs.tab", () => clearInterval(pollTimer));
+
+            document.querySelectorAll("[data-live-minutes]").forEach(button => button.addEventListener("click", () => {
+                windowMinutes = Number(button.dataset.liveMinutes);
+                document.querySelectorAll("[data-live-minutes]").forEach(b => {
+                    b.classList.toggle("active", b === button);
+                    b.setAttribute("aria-pressed", String(b === button));
+                });
+                renderChart();
+            }));
+            $("live-chart-box").addEventListener("mousemove", e => {
+                hoverX = e.clientX - $("live-chart-box").getBoundingClientRect().left;
+                renderChart();
+            });
+            $("live-chart-box").addEventListener("mouseleave", () => { hoverX = null; renderChart(); });
+            window.addEventListener("resize", renderChart);
+        })();
+
         document.getElementById("dashboard-tab").addEventListener("shown.bs.tab", () => map.invalidateSize());
     </script>
 </body>
